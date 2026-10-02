@@ -1,0 +1,114 @@
+{
+    "name": "azure-history-chat",
+    "displayName": "Azure History Chat",
+    "description": "Chat with the Microsoft Azure OpenAI Chat sample and Cosmos DB history.",
+    "version": "0.1.5",
+    "publisher": "local",
+    "engines": {
+        "vscode": "^1.96.0"
+    },
+    "categories": [
+        "AI",
+        "Other"
+    ],
+    "main": "./out/extension.js",
+    "activationEvents": [
+        "onView:azureChat.chat"
+    ],
+    "contributes": {
+        "commands": [
+            {
+                "command": "azureChat.configure",
+                "title": "Azure Chat: Configure Connection"
+            },
+            {
+                "command": "azureChat.attachSelection",
+                "title": "Azure Chat: Attach Selection"
+            },
+            {
+                "command": "azureChat.showApiLog",
+                "title": "Azure Chat: Show API Log"
+            }
+        ],
+        "viewsContainers": {
+            "activitybar": [
+                {
+                    "id": "azureChat",
+                    "title": "Azure Chat",
+                    "icon": "media/icon.svg"
+                }
+            ]
+        },
+        "views": {
+            "azureChat": [
+                {
+                    "type": "webview",
+                    "id": "azureChat.chat",
+                    "name": "Chat"
+                }
+            ]
+        },
+        "configuration": {
+            "title": "Azure Chat",
+            "properties": {
+                "azureChat.baseUrl": {
+                    "type": "string",
+                    "scope": "application",
+                    "default": "",
+                    "description": "Base URL of the deployed Microsoft chat sample (not the Azure OpenAI resource endpoint)."
+                },
+                "azureChat.maxAttachmentBytes": {
+                    "type": "number",
+                    "default": 200000,
+                    "minimum": 1024,
+                    "description": "Maximum combined UTF-8 attachment size per message."
+                },
+                "azureChat.logApiCalls": {
+                    "type": "boolean",
+                    "scope": "application",
+                    "default": false,
+                    "description": "Log API URLs, methods, bodies, status codes and streamed responses to Azure Chat API output. Includes chat and attached file contents; authorization headers are excluded."
+                },
+                "azureChat.historyReadMethod": {
+                    "type": "string",
+                    "scope": "application",
+                    "enum": [
+                        "GET",
+                        "POST"
+                    ],
+                    "default": "GET",
+                    "description": "GET uses /history/read/{id}; POST uses /history/read with conversation_id. Choose the route supported by your backend."
+                },
+                "azureChat.fileProposalInstructions": {
+                    "type": "boolean",
+                    "scope": "application",
+                    "default": false,
+                    "description": "Append the azure-files formatting instruction to prompts for file proposals. Off by default so normal messages contain only your text and attachments."
+                }
+            }
+        },
+        "menus": {
+            "editor/context": [
+                {
+                    "command": "azureChat.attachSelection",
+                    "when": "editorHasSelection",
+                    "group": "navigation"
+                }
+            ]
+        }
+    },
+    "scripts": {
+        "compile": "tsc -p .",
+        "watch": "tsc -w -p .",
+        "test": "npm run compile && node --test test/*.test.js",
+        "package": "npm run compile && vsce package"
+    },
+    "devDependencies": {
+        "@highlightjs/cdn-assets": "^11.12.0",
+        "@types/node": "^22.0.0",
+        "@types/vscode": "^1.96.0",
+        "@vscode/vsce": "^3.0.0",
+        "markdown-it": "^15.0.2",
+        "typescript": "^5.7.0"
+    }
+}

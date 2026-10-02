@@ -1,0 +1,7 @@
+src/**
+test/**
+.vscode/**
+tsconfig.json
+node_modules/**
+.npm-cache/**
+*.vsix

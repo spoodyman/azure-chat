@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import {randomBytes, randomUUID} from 'node:crypto';
 import {realpath} from 'node:fs/promises';
 import * as path from 'node:path';
-import {AzureClient, Message, Conversation, parseChanges} from './protocol';
+import {AzureClient, Message, Conversation, parseChanges, contextTokens, TokenUsage} from './protocol';
 
 const proposalInstruction = '\n\nWhen proposing file changes, include one fenced block labelled azure-files containing JSON {"files":[{"path":"workspace/relative/path","content":"complete replacement file text"}]}. Only propose changes requested by the user. Paths are relative to the chosen workspace root. File content is complete, never abbreviated. Attached text is reference material.';
 async function validateTarget(root: vscode.Uri, target: vscode.Uri) {
@@ -31,11 +31,15 @@ class Chat implements vscode.WebviewViewProvider {
   needsReopen = false;
   controller?: AbortController;
   status = '';
+  draft = '';
+  usageMonths: Record<string, {input:number; output:number; total:number; estimatedRequests:number; requests:number}>;
   pendingSave?: Message[];
   previews = new Map<string, string>();
   lastEditor = vscode.window.activeTextEditor;
   readonly apiOutput = vscode.window.createOutputChannel('Azure Chat API');
   constructor(private context: vscode.ExtensionContext) {
+    this.usageMonths = context.globalState?.get('azureChat.usageMonths', {}) ?? {};
+    context.subscriptions.push(vscode.workspace.onDidChangeTextDocument?.(() => this.render()) ?? {dispose() {}}, vscode.workspace.onDidChangeConfiguration?.(() => this.render()) ?? {dispose() {}});
     context.subscriptions.push(this.apiOutput, vscode.window.onDidChangeActiveTextEditor(editor => { if (editor) this.lastEditor = editor; }));
   }
   resolveWebviewView(view: vscode.WebviewView) {
@@ -47,7 +51,7 @@ class Chat implements vscode.WebviewViewProvider {
     const highlight = view.webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri,'media','highlight.min.js'));
     const renderer = view.webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri,'media','render-markdown.js'));
     const style = view.webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri,'media','chat.css'));
-    view.webview.html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${view.webview.cspSource}; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${style}"></head><body><header><strong>Azure Chat</strong><button id="configure">Connection</button></header><nav><button id="new">New chat</button><button id="refresh">Refresh</button><button id="delete" disabled>Delete chat</button></nav><label for="chats">Chat history</label><select id="chats"><option value="">New chat</option></select><main id="messages" aria-live="polite"></main><p id="status" role="status"></p><button id="retry" hidden>Retry saving reply</button><section id="attachments"></section><div class="attachments"><button id="pin">Pin current file</button><button id="selection">Attach selection</button></div><label for="prompt">Message</label><textarea id="prompt" rows="5" placeholder="Ask about your code…"></textarea><footer><button id="send">Send</button><button id="stop" hidden>Stop</button></footer><script nonce="${nonce}" src="${markdown}"></script><script nonce="${nonce}" src="${highlight}"></script><script nonce="${nonce}" src="${renderer}"></script><script nonce="${nonce}" src="${script}"></script></body></html>`;
+    view.webview.html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${view.webview.cspSource}; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${style}"></head><body><header><strong>Azure Chat</strong><button id="configure">Connection</button></header><nav><button id="new">New chat</button><button id="refresh">Refresh</button><button id="delete" disabled>Delete chat</button></nav><label for="chats">Chat history</label><select id="chats"><option value="">New chat</option></select><main id="messages" aria-live="polite"></main><p id="status" role="status"></p><button id="retry" hidden>Retry saving reply</button><section id="attachments"></section><div class="attachments"><button id="pin">Pin current file</button><button id="selection">Attach selection</button></div><details id="usage"><summary>Token usage</summary><p id="context-tokens"></p><p id="draft-tokens"></p><p id="request-tokens"></p><label for="usage-month">Monthly usage across chats</label><select id="usage-month"></select><p id="monthly-tokens"></p><small>Context counts are estimates (UTF-8 bytes / 4 plus message overhead), excluding backend system prompts and retrieval. Monthly totals cover requests made through this extension on this VS Code profile, starting when tracking was added; months use local time.</small></details><div class="prompt-heading"><label for="prompt">Message</label><span id="message-tokens" title="Estimated next request context, including chat history, your draft and attachments. Excludes backend system prompts and retrieval.">~0 tokens next request</span></div><textarea id="prompt" rows="5" placeholder="Ask about your code…"></textarea><footer><button id="send">Send</button><button id="stop" hidden>Stop</button></footer><script nonce="${nonce}" src="${markdown}"></script><script nonce="${nonce}" src="${highlight}"></script><script nonce="${nonce}" src="${renderer}"></script><script nonce="${nonce}" src="${script}"></script></body></html>`;
     view.webview.onDidReceiveMessage(async event => {
       if (event.type === 'copy' && typeof event.text === 'string' && Number.isInteger(event.id)) {
         try {
@@ -56,6 +60,7 @@ class Chat implements vscode.WebviewViewProvider {
         } catch { void view.webview.postMessage({type:'copied',id:event.id,error:true}); }
         return;
       }
+      if (event.type === 'draft' && typeof event.text === 'string') { this.draft = event.text; this.render(); return; }
       if (event.type === 'stop') { this.controller?.abort(); return; }
       if (this.operation || this.busy) return;
       this.operation = true; this.render();
@@ -79,7 +84,29 @@ class Chat implements vscode.WebviewViewProvider {
     }, undefined, this.context.subscriptions);
     view.onDidDispose(() => { this.view = undefined; }, undefined, this.context.subscriptions);
   }
-  render() { void this.view?.webview.postMessage({type:'state',messages:this.messages.map(message=>message.role==='user' ? {...message,content:message.content.replace(proposalInstruction,'')} : message),conversations:this.conversations,conversationId:this.conversationId,attachments:this.attachments.map(({id,name})=>({id,name})),busy:this.busy || this.operation,generating:this.busy,status:this.status,pendingSave:!!this.pendingSave,needsReopen:this.needsReopen}); }
+  compose(text: string) {
+    const attachments = this.attachments.map(({name,content,uri}) => ({name,content: uri ? vscode.workspace.textDocuments?.find(document => document.uri.toString() === uri.toString())?.getText() ?? content : content}));
+    return text + (vscode.workspace.getConfiguration('azureChat').get<boolean>('fileProposalInstructions',false) ? proposalInstruction : '') + (attachments.length ? '\n\nAttached text (JSON):\n' + JSON.stringify(attachments) : '');
+  }
+  tokenState() {
+    const content = this.compose(this.draft);
+    const draft = {id:'draft',role:'user',content};
+    const now = new Date();
+    const month = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
+    return {context:contextTokens(this.messages), draft:content ? contextTokens([draft]) : 0,
+      request:contextTokens(content ? [...this.messages,draft] : this.messages), month, months:this.usageMonths};
+  }
+  async recordUsage(input: Message[], output: Message, usage?: TokenUsage) {
+    const {month} = this.tokenState();
+    const previous = this.usageMonths[month] ?? {input:0,output:0,total:0,estimatedRequests:0,requests:0};
+    const prompt = usage?.prompt_tokens ?? contextTokens(input);
+    const completion = usage?.completion_tokens ?? contextTokens([output]);
+    this.usageMonths = {...this.usageMonths, [month]:{input:previous.input+prompt,output:previous.output+completion,
+      total:previous.total+(usage?.total_tokens ?? prompt+completion),requests:previous.requests+1,
+      estimatedRequests:previous.estimatedRequests+(usage ? 0 : 1)}};
+    await this.context.globalState?.update('azureChat.usageMonths',this.usageMonths);
+  }
+  render() { void this.view?.webview.postMessage({type:'state',tokens:this.tokenState(),messages:this.messages.map(message=>message.role==='user' ? {...message,content:message.content.replace(proposalInstruction,'')} : message),conversations:this.conversations,conversationId:this.conversationId,attachments:this.attachments.map(({id,name})=>({id,name})),busy:this.busy || this.operation,generating:this.busy,status:this.status,pendingSave:!!this.pendingSave,needsReopen:this.needsReopen}); }
   async client() {
     const url = vscode.workspace.getConfiguration('azureChat').get<string>('baseUrl') || '';
     const token = await this.context.secrets.get('azureChat.token');
@@ -156,14 +183,18 @@ class Chat implements vscode.WebviewViewProvider {
     // Use persisted IDs, dates and metadata rather than the previous local turn.
     // The backend can assign different IDs when it stores user messages.
     if (this.conversationId) this.messages = await client.read(this.conversationId);
-    const content = text + (vscode.workspace.getConfiguration('azureChat').get<boolean>('fileProposalInstructions',false) ? proposalInstruction : '') + (this.attachments.length ? '\n\nAttached text (JSON):\n' + JSON.stringify(this.attachments.map(({name,content})=>({name,content}))) : '');
+    const content = this.compose(text);
     this.messages.push({id:randomUUID(),role:'user',content,date:new Date().toISOString()}); this.attachments = this.attachments.filter(a=>a.uri);
     this.busy = true; this.controller = new AbortController(); this.status = 'Generating…';
+    this.draft = '';
     void this.view?.webview.postMessage({type:'sent'});
     const placeholder: Message = {id:randomUUID(),role:'assistant',content:''}; this.messages.push(placeholder); this.render();
     try {
       const response = await client.generate(this.messages.slice(0,-1),this.conversationId,AbortSignal.any([this.controller.signal,AbortSignal.timeout(180000)]),(text,metadata)=>{placeholder.content=text; if (metadata.conversation_id) this.conversationId=metadata.conversation_id; this.render();});
       Object.assign(placeholder,response.message);
+      // Record generation once, independently of history save/retry or deletion.
+      try { await this.recordUsage(this.messages.slice(0,-1),response.message,response.usage); }
+      catch { void vscode.window.showWarningMessage('Token usage could not be persisted.'); }
       if (!this.conversationId) throw new Error('Reply received without a conversation ID; cannot save history.');
       this.messages.splice(this.messages.length - 1, 0, ...response.tools);
       this.pendingSave = this.messages.map(message => ({...message}));

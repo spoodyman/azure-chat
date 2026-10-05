@@ -130,3 +130,12 @@ test('bundled Markdown renders formatting and blocks executable HTML and links',
   const unsafe=md.render('<script>alert(1)</script>\n\n[bad](javascript:alert(1))');
   assert.ok(!unsafe.includes('<script>'));assert.ok(!unsafe.includes('href="javascript:'));
 });
+
+test('final SSE usage event is retained without overwriting it with empty events',async t=>{
+  const client=await mock(t,(req,res)=>{
+    res.setHeader('Content-Type','text/event-stream');
+    res.end('data: {"choices":[{"delta":{"content":"Reply"}}]}\n\ndata: {"choices":[],"usage":{"prompt_tokens":42,"completion_tokens":8,"total_tokens":50}}\n\ndata: {}\n\ndata: [DONE]\n');
+  });
+  const result=await client.generate([],undefined,new AbortController().signal,()=>{});
+  assert.deepEqual(result.usage,{prompt_tokens:42,completion_tokens:8,total_tokens:50});
+});

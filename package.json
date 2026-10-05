@@ -4,6 +4,10 @@
     "description": "Chat with the Microsoft Azure OpenAI Chat sample and Cosmos DB history.",
     "version": "0.1.5",
     "publisher": "local",
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/spoodyman/azure-chat.git"
+    },
     "engines": {
         "vscode": "^1.96.0"
     },

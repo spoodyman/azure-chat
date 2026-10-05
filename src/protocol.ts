@@ -1,4 +1,17 @@
 export interface Message { id: string; role: string; content: string; date?: string; createdAt?: string; attachments?: unknown; feedback?: unknown; prompt_fragments?: unknown; }
+export interface TokenUsage { prompt_tokens: number; completion_tokens: number; total_tokens: number; }
+export function readTokenUsage(value: any): TokenUsage | undefined {
+  if (!value || !Number.isSafeInteger(value.prompt_tokens) || value.prompt_tokens < 0 ||
+      !Number.isSafeInteger(value.completion_tokens) || value.completion_tokens < 0) return undefined;
+  const total = value.prompt_tokens + value.completion_tokens;
+  return {prompt_tokens:value.prompt_tokens, completion_tokens:value.completion_tokens,
+    total_tokens:Number.isSafeInteger(value.total_tokens) && value.total_tokens >= total ? value.total_tokens : total};
+}
+// Approximation only: the backend model and tokenizer are not exposed by the sample.
+export function estimateTokens(text: string): number { return Math.ceil(Buffer.byteLength(text, 'utf8') / 4); }
+export function contextTokens(messages: Message[]): number {
+  return messages.length ? 3 + messages.reduce((sum, message) => sum + 4 + estimateTokens(message.role) + estimateTokens(message.content || ''), 0) : 0;
+}
 export interface Conversation { id: string; title: string; createdAt?: string; updatedAt?: string; }
 export interface FileChange { path: string; content: string; }
 
@@ -74,11 +87,13 @@ export class AzureClient {
     if (!Array.isArray(messages)) throw new Error('Unexpected message history response.');
     return messages;
   }
-  async generate(messages: Message[], conversationId: string | undefined, signal: AbortSignal, onUpdate: (text: string, metadata: any) => void): Promise<{message: Message; metadata: any; tools: Message[]}> {
+  async generate(messages: Message[], conversationId: string | undefined, signal: AbortSignal, onUpdate: (text: string, metadata: any) => void): Promise<{message: Message; metadata: any; tools: Message[]; usage?: TokenUsage}> {
     const response = await this.request('/history/generate', {messages, ...(conversationId ? {conversation_id: conversationId, generated: 'false'} : {})}, signal);
+    let usage: TokenUsage | undefined;
     let content = '', metadata: any = {}, id = '', tools: Message[] = [];
     const consume = (value: any) => {
       if (value.error) throw new Error(typeof value.error === 'string' ? value.error : 'Azure returned a generation error.');
+      usage = readTokenUsage(value.usage) ?? usage;
       metadata = {...metadata, ...value.history_metadata};
       id = value.id || id;
       const choice = value.choices?.[0];
@@ -123,6 +138,6 @@ export class AzureClient {
       finally { reader.releaseLock(); }
     }
     if (!content) throw new Error('The backend returned no assistant text.');
-    return {message:{id: id || crypto.randomUUID(), role:'assistant', content, date:new Date().toISOString()}, metadata, tools};
+    return {message:{id: id || crypto.randomUUID(), role:'assistant', content, date:new Date().toISOString()}, metadata, tools, usage};
   }
 }

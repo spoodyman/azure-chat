@@ -16,7 +16,12 @@ for (const type of ['configure','new','refresh','pin','selection','stop','retry'
 element('chats').onchange=()=>send(element('chats').value ? 'open' : 'new',{id:element('chats').value});
 element('send').onclick=()=>send('send',{text:element('prompt').value});
 element('prompt').value=vscode.getState()?.draft || '';
-element('prompt').oninput=()=>vscode.setState({draft:element('prompt').value});
+element('prompt').oninput=()=>{vscode.setState({draft:element('prompt').value});send('draft',{text:element('prompt').value});};
+function renderMonthlyUsage(){
+  const usage=state.tokens?.months[element('usage-month').value];
+  element('monthly-tokens').textContent=usage ? `${usage.total.toLocaleString()} tokens (${usage.input.toLocaleString()} input, ${usage.output.toLocaleString()} output), ${usage.requests} requests; ${usage.estimatedRequests} estimated.` : '0 tokens; no recorded requests.';
+}
+element('usage-month').onchange=renderMonthlyUsage;
 element('prompt').onkeydown=event=>{if(event.key==='Enter' && !event.shiftKey && !event.isComposing){event.preventDefault();if(!state.busy && !element('send').disabled)element('send').click();}};
 window.addEventListener('message',event=>{
   if(event.data.type==='copied'){
@@ -28,6 +33,15 @@ window.addEventListener('message',event=>{
   if(event.data.type==='sent'){element('prompt').value='';vscode.setState({draft:''});return;}
   if(event.data.type!=='state')return;
   state=event.data;
+  if(state.tokens){
+    element('context-tokens').textContent=`Chat context: ~${state.tokens.context.toLocaleString()} tokens`;
+    element('draft-tokens').textContent=`Draft with attachments: ~${state.tokens.draft.toLocaleString()} tokens`;
+    element('message-tokens').textContent=`~${state.tokens.request.toLocaleString()} tokens next request`;
+    element('request-tokens').textContent=`Next request context: ~${state.tokens.request.toLocaleString()} tokens`;
+    const selected=element('usage-month').value || state.tokens.month;
+    element('usage-month').replaceChildren(...[...new Set([state.tokens.month,...Object.keys(state.tokens.months)])].sort().reverse().map(month=>new Option(month,month)));
+    element('usage-month').value=selected;renderMonthlyUsage();
+  }
   const messages=element('messages');const nearBottom=messages.scrollHeight-messages.scrollTop-messages.clientHeight<80;
   messages.replaceChildren();
   state.messages.forEach((message,index)=>{
@@ -62,3 +76,4 @@ window.addEventListener('message',event=>{
   element('stop').hidden=!state.generating;element('retry').hidden=!state.pendingSave;element('retry').disabled=state.busy;
 });
 send('ready');
+send('draft',{text:element('prompt').value});

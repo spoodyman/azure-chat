@@ -25,6 +25,12 @@ The extension does not select a model. Your Azure backend must be configured to 
 - **Copy reply** copies the original Markdown. Each code block has **Copy code** and syntax highlighting for common languages; unknown languages appear as plain text.
 - All attachments travel as text within JSON. There are no uploads, image inputs, or native model tools. Attached text becomes part of server chat history.
 
+## Token usage
+
+The estimated next request token count stays visible beside **Message** and updates as you type. Expand **Token usage** above the message box to see estimated chat context, draft tokens including attachments and optional file proposal instructions, and the combined next request context. Counts update while typing, attaching text, editing pinned files, opening chats and receiving replies. These use UTF-8 bytes divided by four plus message overhead, rather than a model tokenizer; backend system prompts, retrieval and context truncation are unknown.
+
+Choose a month to see input, output and total tokens across requests made through this extension in this VS Code profile. Backend `usage` counts are used when returned; otherwise counts are estimated and the number of estimated requests is shown. Each follow-up counts its full input context again. Totals persist across restarts and chat deletion, and saving retries do not count again. Months use local calendar time. Tracking starts with this feature; older chats, other clients, backend title generation and cancelled or failed generations are not included. This is not an Azure billing report.
+
 ## Create or replace files
 
 Ask the assistant to create or update a file. Enable `azureChat.fileProposalInstructions` to append the formatting instruction when requesting file proposals, or specify this format in your own prompt. This setting is off by default so ordinary prompts contain only your text and attachments. The proposal format is:

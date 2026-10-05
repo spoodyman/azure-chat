@@ -2,7 +2,7 @@ const {test} = require('node:test');
 const assert = require('node:assert/strict');
 const Module = require('node:module');
 
-function createChat(windowOverrides={}, writeText=async()=>{}) {
+function createChat(windowOverrides={}, writeText=async()=>{}, globalState) {
   let chat;
   const disposable = {dispose() {}};
   const vscode = {
@@ -26,7 +26,7 @@ function createChat(windowOverrides={}, writeText=async()=>{}) {
       return name === 'vscode' ? vscode : originalLoad.call(this, name, ...args);
     };
     delete require.cache[require.resolve('../out/extension')];
-    require('../out/extension').activate({subscriptions: []});
+    require('../out/extension').activate({subscriptions: [], globalState});
   } finally {Module._load = originalLoad;}
   return chat;
 }
@@ -95,7 +95,29 @@ test('follow-ups reload persisted history and retry saving the complete dated co
   assert.equal(saves[0].messages[3].id, 'reply');
   assert.ok(saves[0].messages.every(message => message.date));
   assert.ok(chat.pendingSave);
+  const usageBeforeRetry=structuredClone(chat.usageMonths);
   await chat.save();
+  assert.deepEqual(chat.usageMonths,usageBeforeRetry);
+  assert.equal(Object.values(chat.usageMonths)[0].requests,1);
   assert.deepEqual(saves[1], saves[0]);
   assert.equal(chat.pendingSave, undefined);
+});
+
+test('context includes drafts and attachments; monthly usage persists without storing chat contents',async()=>{
+  const stored=new Map();
+  const globalState={get:(key,fallback)=>stored.get(key)??fallback,update:async(key,value)=>stored.set(key,structuredClone(value))};
+  const chat=createChat({},undefined,globalState);
+  chat.messages=[{id:'old',role:'assistant',content:'Previous reply'}];
+  chat.draft='Question';
+  const before=chat.tokenState();
+  chat.attachments=[{id:'file',name:'example.txt',content:'Attached reference text'}];
+  const after=chat.tokenState();
+  assert.equal(after.context,before.context);
+  assert.ok(after.draft>before.draft);assert.ok(after.request>before.request);
+  await chat.recordUsage(chat.messages,{id:'reply',role:'assistant',content:'Reply'},{prompt_tokens:100,completion_tokens:20,total_tokens:120});
+  await chat.recordUsage(chat.messages,{id:'reply2',role:'assistant',content:'Another reply'});
+  const restored=createChat({},undefined,globalState);
+  const usage=restored.tokenState().months[after.month];
+  assert.equal(usage.requests,2);assert.equal(usage.estimatedRequests,1);assert.ok(usage.total>120);
+  assert.ok(!JSON.stringify([...stored.values()]).includes('Previous reply'));
 });

@@ -25,9 +25,31 @@ The extension does not select a model. Your Azure backend must be configured to 
 - **Copy reply** copies the original Markdown. Each code block has **Copy code** and syntax highlighting for common languages; unknown languages appear as plain text.
 - All attachments travel as text within JSON. There are no uploads, image inputs, or native model tools. Attached text becomes part of server chat history.
 
+## Workspace skills
+
+Store reusable instructions in `.md` or `.json` files inside a `skills` folder at the workspace root. Subfolders can be nested freely, for example:
+
+```text
+skills/
+  Test/
+    write-component-unit-test.md
+    write-service-unit-test.md
+    write-cypress-e2e-test.md
+  Component/
+    write-component.md
+```
+
+Use **New skill** above the message box to create a file such as `Test/write-component-unit-test.md`; parent folders are created automatically and the file opens for editing. Markdown can contain ordinary instructions. JSON has no required schema and is sent as text. Existing files are never overwritten by this action.
+
+Click **Skills (selected/total)** to expand or collapse the picker; its expanded state is remembered. Search by file or folder name and check multiple skills to include them as context. The heading counts all available skills, even while filtering. Selected skills remain visible when filtering; click a selected skill to remove it. Files appear automatically when created, changed or deleted. In a workspace with multiple roots, names include the workspace folder. Skills require a trusted workspace.
+
+Each generation reads the latest selected contents, including unsaved editor changes. Skills are sent as a temporary context message only to `/history/generate`; they are excluded from `/history/update`, including save retries. Selection remains active for later messages until removed. Selected skills and attachments share the `azureChat.maxAttachmentBytes` limit.
+
 ## Token usage
 
-The estimated next request token count stays visible beside **Message** and updates as you type. Expand **Token usage** above the message box to see estimated chat context, draft tokens including attachments and optional file proposal instructions, and the combined next request context. Counts update while typing, attaching text, editing pinned files, opening chats and receiving replies. These use UTF-8 bytes divided by four plus message overhead, rather than a model tokenizer; backend system prompts, retrieval and context truncation are unknown.
+Selected skills are included in draft and next request estimates, and in estimated monthly input usage.
+
+The estimated next request token count stays visible beside **Message** and updates as you type. Expand **Token usage** above the message box to see separate estimates for chat context, selected skills, user chatbox text, and pinned files or attached selections. Message overhead and optional file proposal instructions appear separately so the breakdown adds up to the combined next request context. Skills and attachments include their context formatting. Counts update while typing, attaching text, editing selected skills or pinned files, opening chats and receiving replies. These use UTF-8 bytes divided by four plus message overhead, rather than a model tokenizer; backend system prompts, retrieval and context truncation are unknown.
 
 Choose a month to see input, output and total tokens across requests made through this extension in this VS Code profile. Backend `usage` counts are used when returned; otherwise counts are estimated and the number of estimated requests is shown. Each follow-up counts its full input context again. Totals persist across restarts and chat deletion, and saving retries do not count again. Months use local calendar time. Tracking starts with this feature; older chats, other clients, backend title generation and cancelled or failed generations are not included. This is not an Azure billing report.
 

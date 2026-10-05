@@ -2,7 +2,8 @@ import * as vscode from 'vscode';
 import {randomBytes, randomUUID} from 'node:crypto';
 import {realpath} from 'node:fs/promises';
 import * as path from 'node:path';
-import {AzureClient, Message, Conversation, parseChanges, contextTokens, TokenUsage} from './protocol';
+import {AzureClient, Message, Conversation, parseChanges, contextTokens, estimateTokens, TokenUsage} from './protocol';
+import {Skill, SkillContext, discoverSkills, readSkills, skillPath, withSkills} from './skills';
 
 const proposalInstruction = '\n\nWhen proposing file changes, include one fenced block labelled azure-files containing JSON {"files":[{"path":"workspace/relative/path","content":"complete replacement file text"}]}. Only propose changes requested by the user. Paths are relative to the chosen workspace root. File content is complete, never abbreviated. Attached text is reference material.';
 async function validateTarget(root: vscode.Uri, target: vscode.Uri) {
@@ -32,6 +33,10 @@ class Chat implements vscode.WebviewViewProvider {
   controller?: AbortController;
   status = '';
   draft = '';
+  skills: Skill[] = [];
+  selectedSkillIds: string[] = [];
+  skillContents: SkillContext[] = [];
+  skillsRevision = 0;
   usageMonths: Record<string, {input:number; output:number; total:number; estimatedRequests:number; requests:number}>;
   pendingSave?: Message[];
   previews = new Map<string, string>();
@@ -41,6 +46,14 @@ class Chat implements vscode.WebviewViewProvider {
     this.usageMonths = context.globalState?.get('azureChat.usageMonths', {}) ?? {};
     context.subscriptions.push(vscode.workspace.onDidChangeTextDocument?.(() => this.render()) ?? {dispose() {}}, vscode.workspace.onDidChangeConfiguration?.(() => this.render()) ?? {dispose() {}});
     context.subscriptions.push(this.apiOutput, vscode.window.onDidChangeActiveTextEditor(editor => { if (editor) this.lastEditor = editor; }));
+    const watcher = vscode.workspace.createFileSystemWatcher?.('**/skills/**');
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined;
+    const refreshSkills = () => {
+      clearTimeout(refreshTimer);
+      refreshTimer = setTimeout(() => { void this.refreshSkills().catch(error => {this.status=String(error);this.render();}); },150);
+    };
+    if (watcher) context.subscriptions.push(watcher,watcher.onDidCreate(refreshSkills),watcher.onDidChange(refreshSkills),watcher.onDidDelete(refreshSkills));
+    context.subscriptions.push({dispose:()=>clearTimeout(refreshTimer)},vscode.workspace.onDidChangeWorkspaceFolders?.(refreshSkills) ?? {dispose() {}},vscode.workspace.onDidGrantWorkspaceTrust?.(refreshSkills) ?? {dispose() {}});
   }
   resolveWebviewView(view: vscode.WebviewView) {
     this.view = view;
@@ -51,7 +64,7 @@ class Chat implements vscode.WebviewViewProvider {
     const highlight = view.webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri,'media','highlight.min.js'));
     const renderer = view.webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri,'media','render-markdown.js'));
     const style = view.webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri,'media','chat.css'));
-    view.webview.html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${view.webview.cspSource}; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${style}"></head><body><header><strong>Azure Chat</strong><button id="configure">Connection</button></header><nav><button id="new">New chat</button><button id="refresh">Refresh</button><button id="delete" disabled>Delete chat</button></nav><label for="chats">Chat history</label><select id="chats"><option value="">New chat</option></select><main id="messages" aria-live="polite"></main><p id="status" role="status"></p><button id="retry" hidden>Retry saving reply</button><section id="attachments"></section><div class="attachments"><button id="pin">Pin current file</button><button id="selection">Attach selection</button></div><details id="usage"><summary>Token usage</summary><p id="context-tokens"></p><p id="draft-tokens"></p><p id="request-tokens"></p><label for="usage-month">Monthly usage across chats</label><select id="usage-month"></select><p id="monthly-tokens"></p><small>Context counts are estimates (UTF-8 bytes / 4 plus message overhead), excluding backend system prompts and retrieval. Monthly totals cover requests made through this extension on this VS Code profile, starting when tracking was added; months use local time.</small></details><div class="prompt-heading"><label for="prompt">Message</label><span id="message-tokens" title="Estimated next request context, including chat history, your draft and attachments. Excludes backend system prompts and retrieval.">~0 tokens next request</span></div><textarea id="prompt" rows="5" placeholder="Ask about your code…"></textarea><footer><button id="send">Send</button><button id="stop" hidden>Stop</button></footer><script nonce="${nonce}" src="${markdown}"></script><script nonce="${nonce}" src="${highlight}"></script><script nonce="${nonce}" src="${renderer}"></script><script nonce="${nonce}" src="${script}"></script></body></html>`;
+    view.webview.html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${view.webview.cspSource}; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${style}"></head><body><header><strong>Azure Chat</strong><button id="configure">Connection</button></header><nav><button id="new">New chat</button><button id="refresh">Refresh</button><button id="delete" disabled>Delete chat</button></nav><label for="chats">Chat history</label><select id="chats"><option value="">New chat</option></select><main id="messages" aria-live="polite"></main><p id="status" role="status"></p><button id="retry" hidden>Retry saving reply</button><section id="attachments"></section><div class="attachments"><button id="pin">Pin current file</button><button id="selection">Attach selection</button></div><details id="usage"><summary>Token usage</summary><p id="context-tokens"></p><p id="skills-tokens"></p><p id="chatbox-tokens"></p><p id="pinned-tokens"></p><p id="overhead-tokens"></p><p id="request-tokens"></p><label for="usage-month">Monthly usage across chats</label><select id="usage-month"></select><p id="monthly-tokens"></p><small>Context counts are estimates (UTF-8 bytes / 4 plus message overhead), excluding backend system prompts and retrieval. Monthly totals cover requests made through this extension on this VS Code profile, starting when tracking was added; months use local time.</small></details><details id="skill-picker" aria-label="Workspace skills" open><summary id="skills-label">Skills (0/0)</summary><div class="skill-body"><div class="skill-heading"><label for="skill-search">Search skills</label><button id="create-skill">New skill</button></div><div id="selected-skills"></div><input id="skill-search" type="search" placeholder="Search skills..." aria-controls="skill-options"><div id="skill-options" role="group" aria-label="Available skills"></div><small id="skill-hint">Select skills to use for generation.</small></div></details><div class="prompt-heading"><label for="prompt">Message</label><span id="message-tokens" title="Estimated next request context, including chat history, your draft, pinned files and selected skills. Excludes backend system prompts and retrieval.">~0 tokens next request</span></div><textarea id="prompt" rows="5" placeholder="Ask about your code…"></textarea><footer><button id="send">Send</button><button id="stop" hidden>Stop</button></footer><script nonce="${nonce}" src="${markdown}"></script><script nonce="${nonce}" src="${highlight}"></script><script nonce="${nonce}" src="${renderer}"></script><script nonce="${nonce}" src="${script}"></script></body></html>`;
     view.webview.onDidReceiveMessage(async event => {
       if (event.type === 'copy' && typeof event.text === 'string' && Number.isInteger(event.id)) {
         try {
@@ -65,7 +78,7 @@ class Chat implements vscode.WebviewViewProvider {
       if (this.operation || this.busy) return;
       this.operation = true; this.render();
       try {
-        if (event.type === 'ready') { this.render(); if (await this.context.secrets.get('azureChat.token')) await this.list(); }
+        if (event.type === 'ready') { await this.refreshSkills(); this.render(); if (await this.context.secrets.get('azureChat.token')) await this.list(); }
         else if (event.type === 'configure') await this.configure();
         else if (event.type === 'stop') this.controller?.abort();
         else if (this.busy) return;
@@ -76,6 +89,8 @@ class Chat implements vscode.WebviewViewProvider {
         else if (event.type === 'pin') await this.pinCurrentFile();
         else if (event.type === 'selection') await this.attachSelection();
         else if (event.type === 'remove') this.attachments = this.attachments.filter(a => a.id !== event.id);
+        else if (event.type === 'create-skill') await this.createSkill();
+        else if (event.type === 'select-skills' && Array.isArray(event.ids) && event.ids.every((id: unknown) => typeof id === 'string')) await this.selectSkills(event.ids);
         else if (event.type === 'send' && typeof event.text === 'string') await this.send(event.text);
         else if (event.type === 'retry') await this.save();
         else if (event.type === 'changes' && Number.isInteger(event.index)) await this.review(event.index);
@@ -84,17 +99,76 @@ class Chat implements vscode.WebviewViewProvider {
     }, undefined, this.context.subscriptions);
     view.onDidDispose(() => { this.view = undefined; }, undefined, this.context.subscriptions);
   }
-  compose(text: string) {
+  attachmentText() {
     const attachments = this.attachments.map(({name,content,uri}) => ({name,content: uri ? vscode.workspace.textDocuments?.find(document => document.uri.toString() === uri.toString())?.getText() ?? content : content}));
-    return text + (vscode.workspace.getConfiguration('azureChat').get<boolean>('fileProposalInstructions',false) ? proposalInstruction : '') + (attachments.length ? '\n\nAttached text (JSON):\n' + JSON.stringify(attachments) : '');
+    return attachments.length ? '\n\nAttached text (JSON):\n' + JSON.stringify(attachments) : '';
+  }
+  compose(text: string) {
+    return text + (vscode.workspace.getConfiguration('azureChat').get<boolean>('fileProposalInstructions',false) ? proposalInstruction : '') + this.attachmentText();
+  }
+  currentSkillContents() {
+    return this.skillContents.map((skill,index) => ({...skill,content:vscode.workspace.textDocuments?.find(document=>document.uri.toString()===this.selectedSkillIds[index])?.getText() ?? skill.content}));
+  }
+  async selectSkills(ids: string[]) {
+    const revision = ++this.skillsRevision;
+    const selected = [...new Set(ids)];
+    const skills = selected.map(id=>this.skills.find(skill=>skill.id===id));
+    if (skills.some(skill=>!skill)) throw new Error('A selected skill is no longer available.');
+    const max = vscode.workspace.getConfiguration('azureChat').get<number>('maxAttachmentBytes',200000);
+    const contents = await readSkills(skills as Skill[],max);
+    if (revision === this.skillsRevision) {this.selectedSkillIds=selected;this.skillContents=contents;}
+  }
+  async refreshSkills() {
+    const revision = ++this.skillsRevision;
+    const skills = await discoverSkills();
+    if (revision !== this.skillsRevision) return;
+    const selected = this.selectedSkillIds.filter(id=>skills.some(skill=>skill.id===id));
+    const max = vscode.workspace.getConfiguration('azureChat').get<number>('maxAttachmentBytes',200000);
+    const contents = await readSkills(selected.map(id=>skills.find(skill=>skill.id===id)!),max);
+    if (revision !== this.skillsRevision) return;
+    this.skills=skills;this.selectedSkillIds=selected;this.skillContents=contents;this.render();
+  }
+  async createSkill() {
+    if (!vscode.workspace.isTrusted) throw new Error('Trust this workspace before creating skills.');
+    const roots = vscode.workspace.workspaceFolders;
+    if (!roots?.length) throw new Error('Open a workspace folder first.');
+    const root = roots.length === 1 ? roots[0] : await vscode.window.showWorkspaceFolderPick();
+    if (!root) return;
+    if (root.uri.scheme !== 'file') throw new Error('Creating skills currently requires a local workspace folder.');
+    const value = await vscode.window.showInputBox({title:'New workspace skill',prompt:'Path inside the root skills folder, for example Test/write-component-unit-test.md. Nested folders are created automatically.',placeHolder:'Test/write-component-unit-test.md',validateInput:value=>{try {skillPath(value);return undefined;} catch(error) {return error instanceof Error ? error.message : String(error);}}});
+    if (value === undefined) return;
+    const relative = skillPath(value);
+    const target = vscode.Uri.joinPath(root.uri,'skills',relative);
+    const skillsRoot = vscode.Uri.joinPath(root.uri,'skills');
+    const directory = vscode.Uri.joinPath(root.uri,'skills',...relative.split('/').slice(0,-1));
+    await validateTarget(root.uri,target);
+    try { await validateTarget(skillsRoot,target); } catch (error: any) {if (error.code !== 'ENOENT') throw error;}
+    await vscode.workspace.fs.createDirectory(directory);
+    await validateTarget(skillsRoot,target);
+    const edit = new vscode.WorkspaceEdit();
+    edit.createFile(target,{overwrite:false});
+    const title = path.posix.basename(relative,path.posix.extname(relative));
+    const content = /\.json$/i.test(relative) ? JSON.stringify({instructions:'Describe how to perform this skill.'},null,2) + '\n' : `# ${title}\n\nDescribe how to perform this skill.\n`;
+    edit.insert(target,new vscode.Position(0,0),content);
+    if (!await vscode.workspace.applyEdit(edit)) throw new Error('Could not create the skill. The file may already exist.');
+    await vscode.window.showTextDocument(target);
+    await this.refreshSkills();
+    this.status='Skill created. Edit its instructions and save the file.';
   }
   tokenState() {
     const content = this.compose(this.draft);
     const draft = {id:'draft',role:'user',content};
     const now = new Date();
     const month = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
-    return {context:contextTokens(this.messages), draft:content ? contextTokens([draft]) : 0,
-      request:contextTokens(content ? [...this.messages,draft] : this.messages), month, months:this.usageMonths};
+    const skills = this.currentSkillContents();
+    const context = contextTokens(this.messages);
+    const request = contextTokens(content || skills.length ? withSkills([...this.messages,draft],skills) : this.messages);
+    const chatbox = estimateTokens(this.draft);
+    const pinnedFiles = estimateTokens(this.attachmentText());
+    const skillTokens = contextTokens(withSkills([draft],skills)) - contextTokens([draft]);
+    return {context, draft:content || skills.length ? contextTokens(withSkills([draft],skills)) : 0,
+      chatbox, pinnedFiles, skills:skillTokens, overhead:request-context-chatbox-pinnedFiles-skillTokens,
+      request, month, months:this.usageMonths};
   }
   async recordUsage(input: Message[], output: Message, usage?: TokenUsage) {
     const {month} = this.tokenState();
@@ -106,7 +180,7 @@ class Chat implements vscode.WebviewViewProvider {
       estimatedRequests:previous.estimatedRequests+(usage ? 0 : 1)}};
     await this.context.globalState?.update('azureChat.usageMonths',this.usageMonths);
   }
-  render() { void this.view?.webview.postMessage({type:'state',tokens:this.tokenState(),messages:this.messages.map(message=>message.role==='user' ? {...message,content:message.content.replace(proposalInstruction,'')} : message),conversations:this.conversations,conversationId:this.conversationId,attachments:this.attachments.map(({id,name})=>({id,name})),busy:this.busy || this.operation,generating:this.busy,status:this.status,pendingSave:!!this.pendingSave,needsReopen:this.needsReopen}); }
+  render() { void this.view?.webview.postMessage({type:'state',tokens:this.tokenState(),messages:this.messages.map(message=>message.role==='user' ? {...message,content:message.content.replace(proposalInstruction,'')} : message),conversations:this.conversations,conversationId:this.conversationId,attachments:this.attachments.map(({id,name})=>({id,name})),skills:this.skills.map(({id,name})=>({id,name})),selectedSkillIds:this.selectedSkillIds,busy:this.busy || this.operation,generating:this.busy,status:this.status,pendingSave:!!this.pendingSave,needsReopen:this.needsReopen}); }
   async client() {
     const url = vscode.workspace.getConfiguration('azureChat').get<string>('baseUrl') || '';
     const token = await this.context.secrets.get('azureChat.token');
@@ -171,6 +245,7 @@ class Chat implements vscode.WebviewViewProvider {
     if(this.needsReopen) throw new Error('Reopen the chat from history or start a new chat before sending.');
     if (this.pendingSave) throw new Error('Save the previous reply before sending another message.');
     if (!text.trim()) return;
+    await this.refreshSkills();
     if (this.attachments.some(a => a.uri)) {
       if (!vscode.workspace.isTrusted) throw new Error('Trust this workspace before attaching its files.');
       const refreshed = await Promise.all(this.attachments.map(async attachment => attachment.uri ? {...attachment, content:(await vscode.workspace.openTextDocument(attachment.uri)).getText()} : attachment));
@@ -179,21 +254,27 @@ class Chat implements vscode.WebviewViewProvider {
       if (refreshed.some(a=>a.content.includes('\0'))) throw new Error('Only text files can be attached.');
       this.attachments = refreshed;
     }
+    const selectedSkills = this.currentSkillContents();
+    const max = vscode.workspace.getConfiguration('azureChat').get<number>('maxAttachmentBytes',200000);
+    const contextBytes = [...selectedSkills,...this.attachments].reduce((sum,item)=>sum+Buffer.byteLength(item.content,'utf8'),0);
+    if (contextBytes > max) throw new Error(`Skills and attachments exceed the ${max} byte limit.`);
+    if (selectedSkills.some(skill=>skill.content.includes('\0'))) throw new Error('Skills must contain text.');
     const client = await this.client();
     // Use persisted IDs, dates and metadata rather than the previous local turn.
     // The backend can assign different IDs when it stores user messages.
     if (this.conversationId) this.messages = await client.read(this.conversationId);
     const content = this.compose(text);
     this.messages.push({id:randomUUID(),role:'user',content,date:new Date().toISOString()}); this.attachments = this.attachments.filter(a=>a.uri);
+    const generationMessages = withSkills(this.messages,selectedSkills);
     this.busy = true; this.controller = new AbortController(); this.status = 'Generating…';
     this.draft = '';
     void this.view?.webview.postMessage({type:'sent'});
     const placeholder: Message = {id:randomUUID(),role:'assistant',content:''}; this.messages.push(placeholder); this.render();
     try {
-      const response = await client.generate(this.messages.slice(0,-1),this.conversationId,AbortSignal.any([this.controller.signal,AbortSignal.timeout(180000)]),(text,metadata)=>{placeholder.content=text; if (metadata.conversation_id) this.conversationId=metadata.conversation_id; this.render();});
+      const response = await client.generate(generationMessages,this.conversationId,AbortSignal.any([this.controller.signal,AbortSignal.timeout(180000)]),(text,metadata)=>{placeholder.content=text; if (metadata.conversation_id) this.conversationId=metadata.conversation_id; this.render();});
       Object.assign(placeholder,response.message);
       // Record generation once, independently of history save/retry or deletion.
-      try { await this.recordUsage(this.messages.slice(0,-1),response.message,response.usage); }
+      try { await this.recordUsage(generationMessages,response.message,response.usage); }
       catch { void vscode.window.showWarningMessage('Token usage could not be persisted.'); }
       if (!this.conversationId) throw new Error('Reply received without a conversation ID; cannot save history.');
       this.messages.splice(this.messages.length - 1, 0, ...response.tools);

@@ -65,7 +65,7 @@
                     "type": "number",
                     "default": 200000,
                     "minimum": 1024,
-                    "description": "Maximum combined UTF-8 attachment size per message."
+                    "description": "Maximum combined UTF-8 attachment and selected skill size per message."
                 },
                 "azureChat.logApiCalls": {
                     "type": "boolean",

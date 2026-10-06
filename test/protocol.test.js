@@ -14,7 +14,7 @@ test('connection URLs require HTTPS except loopback and prohibit embedded creden
   for(const url of ['http://example.com','https://user:pass@example.com','https://example.com?token=x','file:///tmp'])assert.throws(()=>new AzureClient(url,'token'));
   assert.doesNotThrow(()=>new AzureClient('https://example.com/chat/','token'));
 });
-async function mock(t,handler,log){const server=http.createServer(handler);await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));return new AzureClient(`http://127.0.0.1:${server.address().port}`,'test-user-token',log);}
+async function mock(t,handler,log,readMethod){const server=http.createServer(handler);await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));return new AzureClient(`http://127.0.0.1:${server.address().port}`,'test-user-token',log,readMethod);}
 test('deleting a conversation uses DELETE with its ID and surfaces backend failures',async t=>{
   const requests=[];
   const client=await mock(t,async(req,res)=>{
@@ -224,6 +224,41 @@ test('API diagnostics include requests and error responses without the bearer to
   const text=logs.join('\n');
   assert.match(text,/GET .*\/history\/read\/chat%2F1/);assert.match(text,/Response: 404/);assert.match(text,/route missing \[REDACTED\]/);assert.ok(!text.includes('test-user-token'));
 });
+for(const readMethod of ['GET','POST'])for(const wrapped of [false,true])test(`${readMethod} history read cleans stored user prompts before follow-up generation (${wrapped?'object':'array'} response)`,async t=>{
+  const {withCodeContext,skillPrefix}=require('../out/codeContext');
+  const attached='\n\nAttached text (JSON):\n'+JSON.stringify([{name:'src/a.ts',content:'User request:\nconst a = 1;'}]);
+  const plain={id:'stored-user',role:'user',content:'1+1'+attached,createdAt:'2026-10-06',attachments:[{name:'src/a.ts'}],feedback:null,prompt_fragments:['context']};
+  const enriched=withCodeContext([{...plain,content:skillPrefix+JSON.stringify([{name:'old.md',content:'OLD skill'}])+'\n\nUser request:\n'+plain.content}])[0];
+  const older={...plain,id:'older-user',content:'Code response instructions:\r\nOlder instructions\r\nSelected skills (JSON):\r\nOLD skill\r\nUser request:\r\nKeep these lines\r\n  exactly  '};
+  const stored=[enriched,older,{id:'reply',role:'assistant',content:enriched.content,date:'2026-10-06'},
+    {id:'tool',role:'tool',content:'User request:\nKeep tool output',date:'2026-10-06'}];
+  const original=structuredClone(stored),generations=[],logs=[];
+  const client=await mock(t,async(req,res)=>{
+    let raw='';for await(const chunk of req)raw+=chunk;
+    res.setHeader('Content-Type','application/json');
+    if(req.url.startsWith('/history/read')){
+      assert.equal(req.method,readMethod);
+      assert.equal(req.url,readMethod==='GET'?'/history/read/chat':'/history/read');
+      if(readMethod==='POST')assert.deepEqual(JSON.parse(raw),{conversation_id:'chat'});
+      res.end(JSON.stringify(wrapped?{messages:stored}:stored));
+    }else{
+      assert.equal(req.url,'/history/generate');generations.push(JSON.parse(raw));
+      res.end(JSON.stringify({choices:[{message:{role:'assistant',content:'Done'}}]}));
+    }
+  },entry=>logs.push(entry),readMethod);
+  const loaded=await client.read('chat');
+  assert.deepEqual(loaded,[plain,{...older,content:'Keep these lines\r\n  exactly  '},...stored.slice(2)]);
+  const fresh={id:'new-user',role:'user',content:'Follow up',date:'2026-10-06'};
+  const input=withCodeContext([...loaded,{...fresh,content:skillPrefix+JSON.stringify([{name:'current.md',content:'CURRENT skill'}])+'\n\nUser request:\n'+fresh.content}]);
+  await client.generate(input,'chat',new AbortController().signal,()=>{});
+  assert.deepEqual(generations[0].messages,input.map(({createdAt,...fields})=>createdAt===undefined?fields:{...fields,date:fields.date??createdAt}));
+  assert.equal(generations[0].messages[0].content,plain.content);
+  assert.ok(generations[0].messages.at(-1).content.includes('CURRENT skill'));
+  assert.ok(generations[0].messages.at(-1).content.includes('Code response instructions:'));
+  assert.deepEqual(stored,original);
+  assert.ok(logs.some(log=>log.includes('Response body chunk:')&&log.includes('OLD skill')));
+});
+
 test('POST history read preserves message fields and logs the response body',async t=>{
   const logs=[];
   const server=http.createServer(async(req,res)=>{

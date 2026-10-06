@@ -95,7 +95,7 @@ public final class AzureClient implements AutoCloseable {
         JsonElement data = "POST".equals(readMethod) ? json("/history/read", object("conversation_id", id), "POST") : json("/history/read/" + URLEncoder.encode(id, StandardCharsets.UTF_8).replace("+", "%20"), null, "GET");
         JsonElement messages = data.isJsonArray() ? data : data.getAsJsonObject().get("messages");
         if (messages == null || !messages.isJsonArray()) throw new IOException("Unexpected message history response.");
-        return messages.getAsJsonArray();
+        return historyMessages(messages.getAsJsonArray());
     }
     public Generation generate(JsonArray messages, String conversationId, Cancellation cancel, BiConsumer<String, JsonObject> onUpdate) throws Exception {
         JsonObject body = object("messages", messages);

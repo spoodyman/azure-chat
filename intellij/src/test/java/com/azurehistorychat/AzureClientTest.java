@@ -3,6 +3,8 @@ package com.azurehistorychat;
 import com.google.gson.*;
 import com.sun.net.httpserver.*;
 import org.junit.jupiter.api.*;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
 import java.net.*;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
@@ -109,6 +111,36 @@ class AzureClientTest {
         assertEquals(original,bodies.get(0).getAsJsonArray("messages"));
         assertEquals(expected,bodies.get(1).getAsJsonArray("messages"));
         assertEquals(bodies.get(1),bodies.get(2));assertEquals(before,update);assertEquals(original,input);
+    }
+    @ParameterizedTest @ValueSource(strings={"GET-array","GET-object","POST-array","POST-object"})
+    void historyReadsCleanStoredUserPromptsBeforeFollowUpGeneration(String variant) throws Exception {
+        String attached="\n\nAttached text (JSON):\n"+JSON.toJson(List.of(object("name","src/a.ts","content","User request:\nconst a = 1;")));
+        JsonObject plain=object("id","stored-user","role","user","content","1+1"+attached,"createdAt","2026-10-06","attachments",List.of(object("name","src/a.ts")),"feedback",object("score",1),"prompt_fragments",List.of("context"));
+        JsonArray single=new JsonArray();single.add(plain);
+        JsonArray oldSkills=new JsonArray();oldSkills.add(object("name","old.md","content","OLD skill"));
+        JsonArray stored=withCodeContext(withSkills(single,oldSkills),true);
+        JsonObject older=plain.deepCopy();older.addProperty("id","older-user");older.addProperty("content","Code response instructions:\r\nOlder instructions\r\nSelected skills (JSON):\r\nOLD skill\r\nUser request:\r\nKeep these lines\r\n  exactly  ");stored.add(older);
+        stored.add(message("assistant",string(stored.get(0).getAsJsonObject(),"content")));stored.add(message("tool","User request:\nKeep tool output"));
+        JsonArray original=stored.deepCopy(),expected=stored.deepCopy();expected.set(0,plain.deepCopy());expected.get(1).getAsJsonObject().addProperty("content","Keep these lines\r\n  exactly  ");
+        String readMethod=variant.startsWith("GET")?"GET":"POST";
+        server.createContext("/history/read",exchange->{
+            assertEquals(readMethod,exchange.getRequestMethod());
+            if(readMethod.equals("POST"))assertEquals(object("conversation_id","chat"),JsonParser.parseString(new String(exchange.getRequestBody().readAllBytes(),StandardCharsets.UTF_8)));
+            respond(exchange,200,JSON.toJson(variant.endsWith("object")?object("messages",stored):stored));
+        });
+        List<String> logs=new CopyOnWriteArrayList<>();
+        try(AzureClient client=new AzureClient(base,"private-token",readMethod,logs::add)) {
+            JsonArray loaded=client.read("chat");assertEquals(expected,loaded);
+            loaded.add(message("user","Follow up"));
+            JsonArray freshSkills=new JsonArray();freshSkills.add(object("name","current.md","content","CURRENT skill"));
+            JsonArray input=withCodeContext(withSkills(loaded,freshSkills),true);
+            client.generate(input,"chat",new AzureClient.Cancellation(),(text,metadata)->{});
+            assertEquals(wireMessages(input),bodies.getLast().getAsJsonArray("messages"));
+            assertEquals(string(plain,"content"),string(bodies.getLast().getAsJsonArray("messages").get(0).getAsJsonObject(),"content"));
+            assertTrue(string(input.get(input.size()-1).getAsJsonObject(),"content").contains("CURRENT skill"));
+            assertTrue(string(input.get(input.size()-1).getAsJsonObject(),"content").contains("Code response instructions:"));
+        }
+        assertEquals(original,stored);assertTrue(logs.stream().anyMatch(log->log.contains("Response body chunk:")&&log.contains("OLD skill")));
     }
     @Test void supportsPostReadAndNewConversationRequests() throws Exception {
         try (AzureClient client = new AzureClient(base, "private-token", "POST", null)) {

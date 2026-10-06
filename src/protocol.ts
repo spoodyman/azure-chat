@@ -138,7 +138,7 @@ export class AzureClient {
       : await this.json(`/history/read/${encodeURIComponent(conversationId)}`);
     const messages = Array.isArray(data) ? data : data.messages;
     if (!Array.isArray(messages)) throw new Error('Unexpected message history response.');
-    return messages;
+    return historyMessages(messages);
   }
   async generate(messages: Message[], conversationId: string | undefined, signal: AbortSignal, onUpdate: (text: string, metadata: any) => void): Promise<{message: Message; metadata: any; tools: Message[]; usage?: TokenUsage}> {
     const response = await this.request('/history/generate', {messages, ...(conversationId ? {conversation_id: conversationId, generated: 'false'} : {})}, signal);

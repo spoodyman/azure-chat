@@ -4,8 +4,8 @@ The IntelliJ counterpart of the VS Code extension in this repository. It uses th
 
 ## Install and connect
 
-1. Build with `./mvnw clean verify` (Windows: `.\mvnw.cmd clean verify`) using JDK 21 or newer. If Maven is installed, `mvn clean verify` works too.
-2. In IntelliJ, open **Settings → Plugins → ⚙ → Install Plugin from Disk** and choose `target/azure-history-chat-intellij-0.1.9.zip`, then restart when prompted.
+1. Download the [prebuilt plugin ZIP](dist/azure-history-chat-intellij-0.1.9.zip) from this repository. To build from source, use `./mvnw clean verify` (Windows: `.\mvnw.cmd clean verify`) with JDK 21 or newer; installed Maven also supports `mvn clean verify`.
+2. In IntelliJ, open **Settings → Plugins → ⚙ → Install Plugin from Disk** and choose the downloaded ZIP (or `target/azure-history-chat-intellij-0.1.9.zip` for a local build), then restart when prompted.
 3. Open **View → Tool Windows → Azure Chat** and click **Connection**.
 4. Enter the deployed Microsoft Azure OpenAI Chat sample application URL and a user bearer token accepted by its authentication layer. This is the application URL, not the Azure OpenAI resource endpoint. Tokens are stored in IntelliJ Password Safe, separately for each application URL, and are never passed to the embedded UI. Leave the token field blank to retain the token for that URL.
 5. Select **POST** history reads for the Microsoft sample's `POST /history/read` endpoint, or **GET** for backends exposing `/history/read/{id}`.

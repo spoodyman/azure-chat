@@ -10,6 +10,8 @@
         and reviewed file proposals. Configure your deployed chat app URL and user bearer token.
     ]]></description>
     <depends>com.intellij.modules.platform</depends>
+    <!-- JCEF is in core on older supported IDEs and a separate bundled plugin in 262. -->
+    <depends optional="true" config-file="jcef.xml">com.intellij.modules.jcef</depends>
     <extensions defaultExtensionNs="com.intellij">
         <toolWindow id="Azure Chat" anchor="right" factoryClass="com.azurehistorychat.ChatToolWindowFactory" icon="/web/icon.svg"/>
         <applicationService serviceImplementation="com.azurehistorychat.ChatSettings"/>

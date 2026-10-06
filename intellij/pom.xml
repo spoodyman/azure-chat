@@ -5,7 +5,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>com.azurehistorychat</groupId>
     <artifactId>azure-history-chat-intellij</artifactId>
-    <version>0.1.9</version>
+    <version>0.1.10</version>
     <name>Azure History Chat</name>
     <description>Azure chat history, code context, and reviewed file proposals for IntelliJ IDEA.</description>
 
@@ -15,7 +15,7 @@
         <maven.compiler.release>21</maven.compiler.release>
         <idea.build>243.26574.91</idea.build>
         <idea.sinceBuild>243</idea.sinceBuild>
-        <idea.untilBuild>261.*</idea.untilBuild>
+        <idea.untilBuild>262.*</idea.untilBuild>
         <plugin.verifier.version>1.410</plugin.verifier.version>
         <idea.executable>${idea.home}/bin/idea.sh</idea.executable>
     </properties>

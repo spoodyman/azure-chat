@@ -8,3 +8,4 @@ intellij/build/
 intellij/.gradle-user-home/
 intellij/target/
 intellij/.maven-repository/
+intellij/.ide-cache/

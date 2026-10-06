@@ -1,0 +1,3 @@
+<idea-plugin>
+    <!-- Load the bundled JCEF plugin on 262; earlier IDEs provide these classes in core. -->
+</idea-plugin>

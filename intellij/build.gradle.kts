@@ -4,7 +4,7 @@ plugins {
 }
 
 group = "com.azurehistorychat"
-version = "0.1.5"
+version = "0.1.7"
 
 repositories {
     mavenCentral()
@@ -31,7 +31,7 @@ tasks.withType<JavaCompile>().configureEach { options.release.set(21) }
 tasks.test { useJUnitPlatform() }
 tasks.processResources {
     from("../media") {
-        include("chat.js", "chat.css", "render-markdown.js", "markdown-it*", "highlight*", "icon.svg")
+        include("chat.js", "chat.css", "render-markdown.js", "code-cards.js", "code-instructions.txt", "markdown-it*", "highlight*", "icon.svg")
         into("web")
     }
 }

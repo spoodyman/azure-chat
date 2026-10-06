@@ -5,6 +5,8 @@ let state = {};
 const send = (type,extra={}) => vscode.postMessage({type,...extra});
 let copyId = 0;
 const pendingCopies = new Map();
+const codeViews = new Map();
+const replyCache = new Map();
 function copyButton(text, label) {
   const button = document.createElement('button');button.textContent=label;button.title=label;
   button.onclick=()=>{
@@ -79,25 +81,43 @@ window.addEventListener('message',event=>{
     element('usage-month').value=selected;renderMonthlyUsage();
   }
   const messages=element('messages');const nearBottom=messages.scrollHeight-messages.scrollTop-messages.clientHeight<80;
+  for(const card of messages.querySelectorAll?.('.code-accordion') || []) {
+    const scroll=card.querySelector('.code-scroll');
+    codeViews.set(card.dataset.codeKey,{open:card.open,top:scroll.scrollTop,left:scroll.scrollLeft});
+  }
+  while(codeViews.size>500)codeViews.delete(codeViews.keys().next().value);
   messages.replaceChildren();
+  let sourceUser='';
   state.messages.forEach((message,index)=>{
+    if(message.role==='user')sourceUser=message.content;
     const article=document.createElement('article');article.className=message.role;
     const label=document.createElement('strong');label.textContent=message.role==='user'?'You':message.role==='assistant'?'Assistant':message.role;
     const body=document.createElement('div');body.className='content';
-    if(message.role==='assistant'){body.classList.add('markdown');body.innerHTML=markdown.render(message.content || '…');}
+    let reply;
+    if(message.role==='assistant'){
+      body.classList.add('markdown');
+      const key=`${state.conversationId || 'new'}:${index}`;
+      const cached=replyCache.get(key);
+      reply=cached?.content===message.content && cached?.sourceUser===sourceUser ? cached.reply : window.chatCode.buildReply(markdown,message.content || '…',[{role:'user',content:sourceUser}]);
+      replyCache.set(key,{content:message.content,sourceUser,reply});
+      while(replyCache.size>64)replyCache.delete(replyCache.keys().next().value);
+      body.innerHTML=reply.html;
+    }
     else body.textContent=message.content || '…';
     const heading=document.createElement('div');heading.className='message-heading';heading.append(label);
     if(message.role==='assistant' && message.content)heading.append(copyButton(message.content,'Copy reply'));
     article.append(heading,body);
-    if(message.role==='assistant')body.querySelectorAll('pre > code').forEach(code=>{
-      const wrapper=document.createElement('div');wrapper.className='code-block';
-      const toolbar=document.createElement('div');toolbar.className='code-toolbar';
-      const language=document.createElement('span');language.textContent=[...code.classList].find(name=>name.startsWith('language-'))?.slice(9) || 'text';
-      toolbar.append(language,copyButton(code.textContent,'Copy code'));
-      const pre=code.parentElement;pre.replaceWith(wrapper);wrapper.append(toolbar,pre);
+    messages.append(article);
+    if(reply)reply.groups.forEach(group=>{
+      const key=`${state.conversationId || 'new'}:${index}:${group.path || 'code-'+group.slot}`;
+      const card=window.chatCode.createCard(document,group,{key,copyButton,
+        openCode:(block,path)=>send('open-code',{text:block.code,path:path || '',language:block.language}),
+        highlight:(code,language)=>window.hljs.getLanguage(language) ? window.hljs.highlight(code,{language,ignoreIllegals:true}).value : markdown.utils.escapeHtml(code)});
+      const saved=codeViews.get(key);if(saved)card.open=saved.open;
+      body.querySelector(`[data-code-slot="${group.slot}"]`)?.replaceWith(card);
+      if(saved){const scroll=card.querySelector('.code-scroll');scroll.scrollTop=saved.top;scroll.scrollLeft=saved.left;}
     });
     if(message.role==='assistant' && message.content.includes('```azure-files')){const button=document.createElement('button');button.textContent='Review file changes';button.disabled=state.busy;button.onclick=()=>send('changes',{index});article.append(button);}
-    messages.append(article);
   });
   if(nearBottom)messages.scrollTop=messages.scrollHeight;
   element('chats').replaceChildren(new Option('New chat',''),...state.conversations.map(c=>new Option(c.title,c.id)));

@@ -72,6 +72,13 @@ public final class ChatService implements Disposable {
     public void dispatch(JsonObject event) {
         String type = string(event, "type");
         if (type.equals("stop")) { AzureClient.Cancellation current = cancellation; if (current != null) current.cancel(); return; }
+        if (type.equals("open-code")) {
+            ApplicationManager.getApplication().invokeLater(() -> {
+                if (project.isDisposed()) return;
+                try { workspace.openCode(string(event,"text"),string(event,"path"),string(event,"language")); }
+                catch (Exception error) { Messages.showErrorDialog(project,errorMessage(error),"Azure Chat Code Preview"); }
+            }); return;
+        }
         if (type.equals("copy")) {
             ApplicationManager.getApplication().invokeLater(() -> {
                 JsonObject response = object("type", "copied", "id", event.get("id"));
@@ -182,7 +189,7 @@ public final class ChatService implements Disposable {
         for (Attachment item : attachments) {
             String content = item.pinned() == null ? item.content() : workspace.text(item.pinned(), settings().maxAttachmentBytes - used);
             Workspace.validateText(content, settings().maxAttachmentBytes - used); used += bytes(content);
-            result.add(object("name", item.name(), "content", content));
+            result.add(object("name", item.name(), "content", content, "path", item.name().replaceFirst(":\\d+-\\d+$", ""), "kind", item.pinned() == null ? "selection" : "file"));
         }
         return result;
     }
@@ -198,7 +205,7 @@ public final class ChatService implements Disposable {
         try (AzureClient client = client()) {
             if (conversationId != null) messages = client.read(conversationId);
             messages.add(message("user", compose(text, attached)));
-            JsonArray input = withSkills(messages, selectedSkills);
+            JsonArray input = withCodeContext(withSkills(messages, selectedSkills),true);
             attachments.removeIf(value -> value.pinned() == null);
             generating = true; cancellation = new AzureClient.Cancellation(); draft = ""; status = "Generating…"; emit(object("type", "sent"));
             JsonObject placeholder = message("assistant", ""); messages.add(placeholder); render();
@@ -231,7 +238,7 @@ public final class ChatService implements Disposable {
         JsonArray selectedSkills = workspace.skillContents(skills, selected, settings().maxAttachmentBytes);
         String content = compose(draft, attached); JsonArray next = messages.deepCopy(); JsonObject user = message("user", content);
         boolean hasDraft = !content.isEmpty() || !selectedSkills.isEmpty(); if (hasDraft) next.add(user);
-        long context = contextTokens(messages), request = contextTokens(hasDraft ? withSkills(next, selectedSkills) : next);
+        long context = contextTokens(messages), request = contextTokens(hasDraft ? withCodeContext(withSkills(next, selectedSkills),true) : next);
         JsonArray single = new JsonArray(); single.add(user);
         long skillTokens = contextTokens(withSkills(single, selectedSkills)) - contextTokens(single);
         long chatbox = estimate(draft), pinned = estimate(attachmentText(attached));

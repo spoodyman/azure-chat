@@ -4,6 +4,7 @@ import {realpath} from 'node:fs/promises';
 import * as path from 'node:path';
 import {AzureClient, Message, Conversation, parseChanges, contextTokens, estimateTokens, TokenUsage} from './protocol';
 import {Skill, SkillContext, discoverSkills, readSkills, skillPath, withSkills} from './skills';
+import {withCodeContext} from './codeContext';
 
 const proposalInstruction = '\n\nWhen proposing file changes, include one fenced block labelled azure-files containing JSON {"files":[{"path":"workspace/relative/path","content":"complete replacement file text"}]}. Only propose changes requested by the user. Paths are relative to the chosen workspace root. File content is complete, never abbreviated. Attached text is reference material.';
 async function validateTarget(root: vscode.Uri, target: vscode.Uri) {
@@ -46,6 +47,7 @@ class Chat implements vscode.WebviewViewProvider {
     this.usageMonths = context.globalState?.get('azureChat.usageMonths', {}) ?? {};
     context.subscriptions.push(vscode.workspace.onDidChangeTextDocument?.(() => this.render()) ?? {dispose() {}}, vscode.workspace.onDidChangeConfiguration?.(() => this.render()) ?? {dispose() {}});
     context.subscriptions.push(this.apiOutput, vscode.window.onDidChangeActiveTextEditor(editor => { if (editor) this.lastEditor = editor; }));
+    context.subscriptions.push(vscode.workspace.onDidCloseTextDocument?.(document=>this.previews.delete(document.uri.toString())) ?? {dispose() {}});
     const watcher = vscode.workspace.createFileSystemWatcher?.('**/skills/**');
     let refreshTimer: ReturnType<typeof setTimeout> | undefined;
     const refreshSkills = () => {
@@ -63,9 +65,15 @@ class Chat implements vscode.WebviewViewProvider {
     const markdown = view.webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri,'media','markdown-it.min.js'));
     const highlight = view.webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri,'media','highlight.min.js'));
     const renderer = view.webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri,'media','render-markdown.js'));
+    const cards = view.webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri,'media','code-cards.js'));
     const style = view.webview.asWebviewUri(vscode.Uri.joinPath(this.context.extensionUri,'media','chat.css'));
-    view.webview.html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${view.webview.cspSource}; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${style}"></head><body><header><strong>Azure Chat</strong><button id="configure">Connection</button></header><nav><button id="new">New chat</button><button id="refresh">Refresh</button><button id="delete" disabled>Delete chat</button></nav><label for="chats">Chat history</label><select id="chats"><option value="">New chat</option></select><main id="messages" aria-live="polite"></main><p id="status" role="status"></p><button id="retry" hidden>Retry saving reply</button><section id="attachments"></section><div class="attachments"><button id="pin">Pin current file</button><button id="selection">Attach selection</button></div><details id="usage"><summary>Token usage</summary><p id="context-tokens"></p><p id="skills-tokens"></p><p id="chatbox-tokens"></p><p id="pinned-tokens"></p><p id="overhead-tokens"></p><p id="request-tokens"></p><label for="usage-month">Monthly usage across chats</label><select id="usage-month"></select><p id="monthly-tokens"></p><small>Context counts are estimates (UTF-8 bytes / 4 plus message overhead), excluding backend system prompts and retrieval. Monthly totals cover requests made through this extension on this VS Code profile, starting when tracking was added; months use local time.</small></details><details id="skill-picker" aria-label="Workspace skills" open><summary id="skills-label">Skills (0/0)</summary><div class="skill-body"><div class="skill-heading"><label for="skill-search">Search skills</label><button id="create-skill">New skill</button></div><div id="selected-skills"></div><input id="skill-search" type="search" placeholder="Search skills..." aria-controls="skill-options"><div id="skill-options" role="group" aria-label="Available skills"></div><small id="skill-hint">Select skills to use for generation.</small></div></details><div class="prompt-heading"><label for="prompt">Message</label><span id="message-tokens" title="Estimated next request context, including chat history, your draft, pinned files and selected skills. Excludes backend system prompts and retrieval.">~0 tokens next request</span></div><textarea id="prompt" rows="5" placeholder="Ask about your code…"></textarea><footer><button id="send">Send</button><button id="stop" hidden>Stop</button></footer><script nonce="${nonce}" src="${markdown}"></script><script nonce="${nonce}" src="${highlight}"></script><script nonce="${nonce}" src="${renderer}"></script><script nonce="${nonce}" src="${script}"></script></body></html>`;
+    view.webview.html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src ${view.webview.cspSource}; script-src 'nonce-${nonce}';"><link rel="stylesheet" href="${style}"></head><body><header><strong>Azure Chat</strong><button id="configure">Connection</button></header><nav><button id="new">New chat</button><button id="refresh">Refresh</button><button id="delete" disabled>Delete chat</button></nav><label for="chats">Chat history</label><select id="chats"><option value="">New chat</option></select><main id="messages" aria-live="polite"></main><p id="status" role="status"></p><button id="retry" hidden>Retry saving reply</button><section id="attachments"></section><div class="attachments"><button id="pin">Pin current file</button><button id="selection">Attach selection</button></div><details id="usage"><summary>Token usage</summary><p id="context-tokens"></p><p id="skills-tokens"></p><p id="chatbox-tokens"></p><p id="pinned-tokens"></p><p id="overhead-tokens"></p><p id="request-tokens"></p><label for="usage-month">Monthly usage across chats</label><select id="usage-month"></select><p id="monthly-tokens"></p><small>Context counts are estimates (UTF-8 bytes / 4 plus message overhead), excluding backend system prompts and retrieval. Monthly totals cover requests made through this extension on this VS Code profile, starting when tracking was added; months use local time.</small></details><details id="skill-picker" aria-label="Workspace skills" open><summary id="skills-label">Skills (0/0)</summary><div class="skill-body"><div class="skill-heading"><label for="skill-search">Search skills</label><button id="create-skill">New skill</button></div><div id="selected-skills"></div><input id="skill-search" type="search" placeholder="Search skills..." aria-controls="skill-options"><div id="skill-options" role="group" aria-label="Available skills"></div><small id="skill-hint">Select skills to use for generation.</small></div></details><div class="prompt-heading"><label for="prompt">Message</label><span id="message-tokens" title="Estimated next request context, including chat history, your draft, pinned files and selected skills. Excludes backend system prompts and retrieval.">~0 tokens next request</span></div><textarea id="prompt" rows="5" placeholder="Ask about your code…"></textarea><footer><button id="send">Send</button><button id="stop" hidden>Stop</button></footer><script nonce="${nonce}" src="${markdown}"></script><script nonce="${nonce}" src="${highlight}"></script><script nonce="${nonce}" src="${renderer}"></script><script nonce="${nonce}" src="${cards}"></script><script nonce="${nonce}" src="${script}"></script></body></html>`;
     view.webview.onDidReceiveMessage(async event => {
+      if (event.type === 'open-code' && typeof event.text === 'string') {
+        try { await this.openCode(event.text,event.path,event.language); }
+        catch(error) { void vscode.window.showErrorMessage(String(error)); }
+        return;
+      }
       if (event.type === 'copy' && typeof event.text === 'string' && Number.isInteger(event.id)) {
         try {
           await vscode.env.clipboard.writeText(event.text);
@@ -101,7 +109,7 @@ class Chat implements vscode.WebviewViewProvider {
   }
   attachmentText() {
     const attachments = this.attachments.map(({name,content,uri}) => ({name,content: uri ? vscode.workspace.textDocuments?.find(document => document.uri.toString() === uri.toString())?.getText() ?? content : content}));
-    return attachments.length ? '\n\nAttached text (JSON):\n' + JSON.stringify(attachments) : '';
+    return attachments.length ? '\n\nAttached text (JSON):\n' + JSON.stringify(attachments.map(item=>({...item,path:item.name.replace(/:\d+-\d+$/,''),kind:/:\d+-\d+$/.test(item.name) ? 'selection' : 'file'}))) : '';
   }
   compose(text: string) {
     return text + (vscode.workspace.getConfiguration('azureChat').get<boolean>('fileProposalInstructions',false) ? proposalInstruction : '') + this.attachmentText();
@@ -162,7 +170,7 @@ class Chat implements vscode.WebviewViewProvider {
     const month = `${now.getFullYear()}-${String(now.getMonth()+1).padStart(2,'0')}`;
     const skills = this.currentSkillContents();
     const context = contextTokens(this.messages);
-    const request = contextTokens(content || skills.length ? withSkills([...this.messages,draft],skills) : this.messages);
+    const request = contextTokens(content || skills.length ? withCodeContext(withSkills([...this.messages,draft],skills)) : this.messages);
     const chatbox = estimateTokens(this.draft);
     const pinnedFiles = estimateTokens(this.attachmentText());
     const skillTokens = contextTokens(withSkills([draft],skills)) - contextTokens([draft]);
@@ -265,7 +273,7 @@ class Chat implements vscode.WebviewViewProvider {
     if (this.conversationId) this.messages = await client.read(this.conversationId);
     const content = this.compose(text);
     this.messages.push({id:randomUUID(),role:'user',content,date:new Date().toISOString()}); this.attachments = this.attachments.filter(a=>a.uri);
-    const generationMessages = withSkills(this.messages,selectedSkills);
+    const generationMessages = withCodeContext(withSkills(this.messages,selectedSkills));
     this.busy = true; this.controller = new AbortController(); this.status = 'Generating…';
     this.draft = '';
     void this.view?.webview.postMessage({type:'sent'});
@@ -291,6 +299,15 @@ class Chat implements vscode.WebviewViewProvider {
     if (!this.pendingSave || !this.conversationId) return;
     await (await this.client()).json('/history/update',{conversation_id:this.conversationId,messages:this.pendingSave});
     this.pendingSave=undefined;this.needsReopen=false;this.status='Reply saved to chat history.';
+  }
+  async openCode(text: string, filePath?: unknown, language?: unknown) {
+    if (Buffer.byteLength(text,'utf8')>5000000) throw new Error('Code preview exceeds the 5 MB limit.');
+    const extensions: Record<string,string>={typescript:'ts',javascript:'js',python:'py',kotlin:'kt',csharp:'cs',bash:'sh',powershell:'ps1',diff:'diff',patch:'diff'};
+    const label=typeof filePath==='string' && filePath ? path.posix.basename(filePath.replace(/\\/g,'/')).replace(/[^a-z0-9._-]/gi,'_')+(['diff','patch'].includes(String(language)) ? '.diff' : '') : 'code.'+(extensions[String(language)] || String(language || 'txt').replace(/[^a-z0-9]/gi,'') || 'txt');
+    const preview=vscode.Uri.parse(`azure-chat-preview:/${randomUUID()}/${encodeURIComponent(label)}`);
+    this.previews.set(preview.toString(),text);
+    try { const document=await vscode.workspace.openTextDocument(preview); await vscode.window.showTextDocument(document,{preview:false}); }
+    catch(error) { this.previews.delete(preview.toString()); throw error; }
   }
   async review(index: number) {
     if (!vscode.workspace.isTrusted) throw new Error('Trust the workspace to apply file changes.');

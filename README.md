@@ -6,7 +6,7 @@ An [IntelliJ IDEA version](intellij/README.md) is also available in `intellij/`,
 
 ## Install and connect
 
-1. Install the generated `azure-history-chat-0.1.5.vsix` using **Extensions → … → Install from VSIX**.
+1. Install the generated `azure-history-chat-0.1.7.vsix` using **Extensions → … → Install from VSIX**.
 2. Open **Azure Chat** in the activity bar and click **Connection**.
 3. Enter your sample app's base URL, for example `https://your-chat-app.azurewebsites.net`. This is the chat application URL, not the Azure OpenAI resource URL.
 4. Paste a user bearer token accepted by that app's authentication layer. The token is stored in VS Code SecretStorage and never sent to the webview. Repeat Connection to replace an expired token; leave the token field blank to retain it.
@@ -24,7 +24,7 @@ The extension does not select a model. Your Azure backend must be configured to 
 - Click an attachment to remove it before sending. The combined default limit is 200 KB, adjustable in `azureChat.maxAttachmentBytes`. The server's context limit still applies.
 - Send with the button or Enter. Shift+Enter inserts a new line. Streaming and ordinary JSON replies are supported. **Stop** cancels the client request; backend generation may already have saved the user message.
 - Select a chat from history and use **Delete chat** to remove it and its messages after confirmation. Save any pending reply first.
-- **Copy reply** copies the original Markdown. Each code block has **Copy code** and syntax highlighting for common languages; unknown languages appear as plain text.
+- Code appears in collapsed accordions. File-specific blocks are grouped under their relative path, with green `+` and red `−` line counts; unnamed examples each have a **code** accordion. Expand to scroll through highlighted code, **Copy code**, or **Open in editor** for a larger read-only preview. Expanded state and scroll positions survive draft edits and reply updates. **Copy reply** copies the original Markdown.
 - All attachments travel as text within JSON. There are no uploads, image inputs, or native model tools. Attached text becomes part of server chat history.
 
 ## Workspace skills
@@ -57,7 +57,11 @@ Choose a month to see input, output and total tokens across requests made throug
 
 ## Create or replace files
 
-Ask the assistant to create or update a file. Enable `azureChat.fileProposalInstructions` to append the formatting instruction when requesting file proposals, or specify this format in your own prompt. This setting is off by default so ordinary prompts contain only your text and attachments. The proposal format is:
+Each generation includes a temporary response-format instruction asking the model to identify known project-relative file paths. This instruction is counted in request estimates and monthly input usage, but is excluded from history updates and save retries. Attached files include explicit paths and distinguish full files from selections. The model is instructed to keep unknown-file code unnamed and never invent paths.
+
+Full-file proposals use `azure-files` JSON, as below. Ordinary snippets can use a fence such as `typescript file="src/example.ts"`; `complete=true` marks a full replacement and `new=true` a new file. Unified `diff` fences can contain one or multiple files. Complete replacements are compared with the full file attached to the preceding user message; diffs count added and removed hunk lines. New files can use `"newFile":true` and show `+N −0`. When originals are missing, a selection is attached, or the response is only a snippet, counts show `+? −?` rather than guessing. Very expensive comparisons also leave counts unknown. File paths in responses are model-provided labels; applying a file still requires review.
+
+Enable `azureChat.fileProposalInstructions` to additionally append the legacy full-file formatting instruction to the user message; this setting remains off by default. The proposal format is:
 
 ````text
 ```azure-files

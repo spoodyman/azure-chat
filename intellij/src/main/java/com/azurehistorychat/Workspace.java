@@ -9,6 +9,9 @@ import com.intellij.openapi.application.*;
 import com.intellij.openapi.command.WriteCommandAction;
 import com.intellij.openapi.editor.*;
 import com.intellij.openapi.fileEditor.*;
+import com.intellij.openapi.fileTypes.FileTypeManager;
+import com.intellij.openapi.fileTypes.PlainTextFileType;
+import com.intellij.testFramework.LightVirtualFile;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.roots.ProjectRootManager;
 import com.intellij.openapi.ui.*;
@@ -91,6 +94,17 @@ final class Workspace {
             byte[] data = input.readNBytes((int) Math.min(Integer.MAX_VALUE - 1L, Math.max(0, remaining) + 1));
             String result = new String(data, java.nio.charset.StandardCharsets.UTF_8); validateText(result, remaining); return result;
         }
+    }
+    void openCode(String text, String path, String language) throws Exception {
+        if (bytes(text)>5000000) throw new IOException("Code preview exceeds the 5 MB limit.");
+        Map<String,String> extensions=Map.of("typescript","ts","javascript","js","python","py","kotlin","kt","csharp","cs","bash","sh","powershell","ps1","patch","diff");
+        String name=path.isEmpty() ? "code." + extensions.getOrDefault(language,language.isEmpty() ? "txt" : language.replaceAll("[^a-zA-Z0-9]", "")) : path.replace('\\','/').substring(path.replace('\\','/').lastIndexOf('/')+1).replaceAll("[^a-zA-Z0-9._-]", "_") + (language.equals("diff") || language.equals("patch") ? ".diff" : "");
+        ui(() -> {
+            var type=FileTypeManager.getInstance().getFileTypeByFileName(name);
+            LightVirtualFile preview=new LightVirtualFile(name,type.isBinary() ? PlainTextFileType.INSTANCE : type,text.replace("\r\n","\n").replace('\r','\n'));
+            preview.setWritable(false);
+            FileEditorManager.getInstance(project).openFile(preview,true); return null;
+        });
     }
     static void validateText(String text, long remaining) throws IOException {
         if (text.indexOf('\0') >= 0) throw new IOException("Only text files and skills can be attached.");

@@ -6,3 +6,5 @@ node_modules/**
 .npm-cache/**
 *.vsix
 intellij/**
+out/code-accordions-*
+out/edge-code-test/**

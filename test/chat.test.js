@@ -18,7 +18,7 @@ function createChat(windowOverrides={}, writeText=async()=>{}, globalState, work
   let chat;
   const disposable = {dispose() {}};
   const vscode = {
-    Uri: {joinPath: (base,...parts)=>uri(path.join(base.fsPath,...parts))},
+    Uri: {joinPath: (base,...parts)=>uri(path.join(base.fsPath,...parts)),parse:value=>({toString:()=>value,scheme:value.split(':')[0]})},
     FileType: {File:1,Directory:2,SymbolicLink:64},
     Position: class {constructor(line,character){this.line=line;this.character=character;}},
     WorkspaceEdit: class {
@@ -83,6 +83,35 @@ test('copy writes exact Markdown or code while generating and reports clipboard 
   assert.deepEqual(responses[1],{type:'copied',id:2,error:true});
 });
 
+test('larger code views use read-only preview documents and remain available while generating',async()=>{
+  let receive;const opened=[],shown=[];
+  const chat=createChat({showTextDocument:async(document,options)=>shown.push({document,options})},undefined,undefined,{openTextDocument:async target=>{opened.push(target);return {uri:target};}});
+  chat.resolveWebviewView({webview:{cspSource:'local',asWebviewUri:uri=>uri,onDidReceiveMessage:handler=>{receive=handler;},postMessage:()=>{},html:''},onDidDispose:()=>{}});
+  chat.busy=true;const text='const value = "<hello>";\n';
+  await receive({type:'open-code',text,path:'src/example.ts',language:'typescript'});
+  assert.equal(opened[0].scheme,'azure-chat-preview');
+  assert.match(opened[0].toString(),/\/example\.ts$/);
+  assert.equal(chat.previews.get(opened[0].toString()),text);
+  assert.deepEqual(shown[0].options,{preview:false});
+  await chat.openCode('@@ -1 +1 @@\n-old\n+new\n','src/example.ts','diff');
+  assert.match(opened[1].toString(),/example\.ts\.diff$/);
+  await assert.rejects(chat.openCode('x'.repeat(5000001)),/5 MB/);
+});
+
+test('attached files include relative paths and response-format instructions only enter generation',async()=>{
+  const generated=[],saved=[];const chat=createChat();
+  chat.attachments=[{id:'selection',name:'src/example.ts:3-5',content:'selected code'}];
+  chat.conversationId='chat';chat.client=async()=>({read:async()=>[],generate:async messages=>{generated.push(structuredClone(messages));return {message:{id:'reply',role:'assistant',content:'Done'},tools:[],metadata:{}};},json:async(route,body)=>{if(route.startsWith('/history/list'))return [];saved.push(structuredClone(body));return {};}});
+  await chat.send('Update the selected code');
+  const user=generated[0].at(-1);
+  const entries=JSON.parse(user.content.split('\n\nAttached text (JSON):\n')[1]);
+  assert.deepEqual(entries,[{name:'src/example.ts:3-5',content:'selected code',path:'src/example.ts',kind:'selection'}]);
+  assert.equal(generated[0].at(-2).id,'code-response-format');
+  assert.match(generated[0].at(-2).content,/project-relative file path/);
+  assert.ok(saved[0].messages.every(message=>message.id!=='code-response-format'));
+  assert.equal(saved[0].messages[0].content,user.content);
+});
+
 test('follow-ups reload persisted history and retry saving the complete dated conversation', async () => {
   const chat=createChat();
 
@@ -111,9 +140,10 @@ test('follow-ups reload persisted history and retry saving the complete dated co
   await chat.send('Next');
   assert.deepEqual(reads, ['existing']);
   assert.deepEqual(generations[0].messages.slice(0, 2), history);
-  assert.equal(generations[0].messages[2].content, 'Next');
-  assert.ok(generations[0].messages[2].date);
-  assert.deepEqual(saves[0].messages.slice(0, 3), generations[0].messages);
+  assert.equal(generations[0].messages.at(-1).content, 'Next');
+  assert.ok(generations[0].messages.at(-1).date);
+  assert.equal(generations[0].messages[2].id,'code-response-format');
+  assert.deepEqual(saves[0].messages.slice(0, 3), generations[0].messages.filter(message=>message.id!=='code-response-format'));
   assert.equal(saves[0].messages[3].id, 'reply');
   assert.ok(saves[0].messages.every(message => message.date));
   assert.ok(chat.pendingSave);
@@ -245,14 +275,14 @@ test('selected skills use current edits only for generation, including token cou
   const generated=generations[0];assert.equal(generated.at(-1).role,'user');assert.equal(generated.at(-1).content,'Write tests');
   assert.deepEqual(generated[0],history[0]);assert.equal(generated[1].role,'system');
   assert.ok(generated[1].content.includes(edited));assert.ok(generated[1].content.includes('Use standalone components'));
-  assert.equal(generated.filter(message=>message.role==='system').length,1);
+  assert.equal(generated.filter(message=>message.role==='system').length,2);
   assert.ok(!JSON.stringify(chat.messages).includes('UNSAVED'));assert.ok(!JSON.stringify(saves[0]).includes('UNSAVED'));
   assert.ok(saves[0].messages.every(message=>message.role!=='system'));
   await chat.save();assert.deepEqual(saves[1],saves[0]);
   const usage=Object.values(chat.usageMonths)[0];
   const {contextTokens}=require('../out/protocol');assert.equal(usage.input,contextTokens(generated));
   await chat.selectSkills([]);await chat.send('Follow up');
-  assert.ok(generations[1].every(message=>message.role!=='system'));
+  assert.ok(generations[1].every(message=>message.role!=='system' || message.id==='code-response-format'));
 });
 
 test('skills enforce the combined attachment budget and reject binary text before generation',async t=>{

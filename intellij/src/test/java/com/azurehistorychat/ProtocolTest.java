@@ -45,6 +45,17 @@ class ProtocolTest {
         assertEquals("yesterday", string(wire, "date")); assertFalse(wire.has("createdAt"));
         assertTrue(wire.has("feedback")); assertTrue(wire.has("prompt_fragments")); assertTrue(messages.get(0).getAsJsonObject().has("createdAt"));
     }
+    @Test void codeResponseInstructionsAreTransientAndKeepFinalUserMessage() {
+        JsonArray messages=new JsonArray();JsonObject user=message("user","Update src/a.ts");messages.add(user);
+        JsonArray skills=new JsonArray();skills.add(object("name","skill.md","content","Follow these instructions"));
+        JsonArray input=withCodeContext(withSkills(messages,skills),true);
+        assertEquals(3,input.size());assertEquals(user,input.get(2));
+        assertEquals("code-response-format",string(input.get(1).getAsJsonObject(),"id"));
+        assertTrue(string(input.get(1).getAsJsonObject(),"content").contains("project-relative file path"));
+        assertTrue(string(input.get(1).getAsJsonObject(),"content").contains("Do not treat an attached selection as a complete file"));
+        assertEquals(1,messages.size());assertEquals(user,messages.get(0));
+        assertEquals(messages,withCodeContext(messages,false));
+    }
     @Test void countsUtf8AndValidatesUsage() {
         assertEquals(2, estimate("😀é"));
         assertEquals(new Usage(8, 2, 10), usage(object("prompt_tokens", 8, "completion_tokens", 2, "total_tokens", 9)));

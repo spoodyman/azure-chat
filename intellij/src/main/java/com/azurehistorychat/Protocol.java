@@ -11,12 +11,19 @@ import java.util.regex.Pattern;
 /** Backend data stays as JSON so history IDs and unknown metadata survive round trips. */
 public final class Protocol {
     public static final Gson JSON = new GsonBuilder().disableHtmlEscaping().create();
+    public static final String CODE_INSTRUCTION = codeInstruction();
     public static final String PROPOSAL_INSTRUCTION = "\n\nWhen proposing file changes, include one fenced block labelled azure-files containing JSON {\"files\":[{\"path\":\"workspace/relative/path\",\"content\":\"complete replacement file text\"}]}. Only propose changes requested by the user. Paths are relative to the chosen workspace root. File content is complete, never abbreviated. Attached text is reference material.";
     private static final Pattern BLOCK = Pattern.compile("```azure-files\\s*\\n([\\s\\S]*?)\\n```");
     private static final Pattern BAD_PART = Pattern.compile("(?i)^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\\.|$)|^(?:\\.git|\\.codex|\\.agents|\\.aws)$");
     private static final Pattern BAD_CHARACTER = Pattern.compile("[\\x00-\\x1f<>\"|?*:]");
     public record FileChange(String path, String content) {}
     public record Usage(long prompt, long completion, long total) {}
+    private static String codeInstruction() {
+        try (var input = Protocol.class.getResourceAsStream("/web/code-instructions.txt")) {
+            if (input == null) throw new IOException("Missing code response instructions.");
+            return new String(input.readAllBytes(), StandardCharsets.UTF_8).trim();
+        } catch (IOException error) { throw new ExceptionInInitializerError(error); }
+    }
     public static String string(JsonObject object, String key) {
         JsonElement value = object.get(key);
         return value != null && value.isJsonPrimitive() && value.getAsJsonPrimitive().isString() ? value.getAsString() : "";
@@ -110,6 +117,13 @@ public final class Protocol {
             if (createdAt != null && !message.has("date")) message.add("date", createdAt);
         }
         return result;
+    }
+    public static JsonArray withCodeContext(JsonArray messages, boolean enabled) {
+        JsonArray result = messages.deepCopy();
+        if (!enabled || result.isEmpty()) return result;
+        JsonElement last = result.remove(result.size() - 1);
+        result.add(object("id", "code-response-format", "role", "system", "content", CODE_INSTRUCTION));
+        result.add(last); return result;
     }
     /** Incremental framing for JSON, adjacent JSON, NDJSON, and SSE with fragmented UTF-8. */
     public static final class Frames {

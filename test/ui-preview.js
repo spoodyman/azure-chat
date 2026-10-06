@@ -13,7 +13,7 @@ const state={type:'state',conversationId:'preview',conversations:[{id:'preview',
 const bootstrap=`const events=[];let saved={skillsOpen:false};window.acquireVsCodeApi=()=>({postMessage:event=>events.push(event),getState:()=>saved,setState:value=>saved=value});`;
 const check=`
   let previewState=${JSON.stringify(state).replace(/</g,'\\u003c')};
-  const update=()=>window.dispatchEvent(new MessageEvent('message',{data:previewState}));
+  const update=()=>window.dispatchEvent(new MessageEvent('message',{data:structuredClone(previewState)}));
   try {
     update();
     let cards=document.querySelectorAll('.code-accordion');
@@ -29,6 +29,19 @@ const check=`
     if(!cards[0].open)throw Error('Expanded state lost on render');
     cards[0].open=false;update();cards=document.querySelectorAll('.code-accordion');
     if(cards[0].open)throw Error('Collapsed state lost on render');
+    previewState.busy=true;previewState.generating=true;update();
+    if([...document.querySelectorAll('.code-accordion')].some(card=>!card.open))throw Error('Streaming code did not expand');
+    previewState.messages[1].content+=${JSON.stringify('\n\nMore streamed content.\n\n```javascript\nconsole.log("streaming");\n```')};
+    previewState.conversationId='streamed-conversation';update();
+    cards=document.querySelectorAll('.code-accordion');
+    if(cards.length!==4 || [...cards].some(card=>!card.open))throw Error('New streamed code did not expand after conversation ID changed');
+    previewState.generating=false;update();
+    if([...document.querySelectorAll('.code-accordion')].some(card=>card.open))throw Error('Code did not collapse when generation finished');
+    previewState.busy=false;update();
+    if([...document.querySelectorAll('.code-accordion')].some(card=>card.open))throw Error('Finished code reopened on idle update');
+    cards=document.querySelectorAll('.code-accordion');cards[0].open=true;update();
+    cards=document.querySelectorAll('.code-accordion');
+    if(!cards[0].open || cards[1].open)throw Error('Manual expansion after generation did not persist');
     cards[0].open=true;cards[2].open=true;
     const messages=document.getElementById('messages');document.scrollingElement.scrollTop=Math.max(0,messages.querySelector('article.assistant').offsetTop-30);
     document.body.dataset.uiTest='passed';

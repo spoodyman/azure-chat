@@ -2,11 +2,11 @@
 
 A VS Code sidebar that talks to a deployed [Microsoft Azure OpenAI Chat sample](https://github.com/microsoft/sample-app-aoai-chatGPT) with Cosmos DB chat history.
 
-An [IntelliJ IDEA version](intellij/README.md) is also available in `intellij/`, sharing the chat UI and backend contract. Install the [prebuilt plugin ZIP](intellij/dist/azure-history-chat-intellij-0.1.15.zip), or build with `.\mvnw.cmd "-Didea.home=C:\path\to\IntelliJ IDEA" clean verify` from the `intellij` directory. The build uses your local IntelliJ installation instead of JetBrains Maven repositories; see the [build setup](intellij/README.md#diagnostics-and-development) for Java requirements. It targets IntelliJ IDEA 2024.3–2026.2.
+An [IntelliJ IDEA version](intellij/README.md) is also available in `intellij/`, sharing the chat UI and backend contract. Install the [prebuilt plugin ZIP](intellij/dist/azure-history-chat-intellij-0.1.16.zip), or build with `.\mvnw.cmd "-Didea.home=C:\path\to\IntelliJ IDEA" clean verify` from the `intellij` directory. The build uses your local IntelliJ installation instead of JetBrains Maven repositories; see the [build setup](intellij/README.md#diagnostics-and-development) for Java requirements. It targets IntelliJ IDEA 2024.3–2026.2.
 
 ## Install and connect
 
-1. Install the generated `azure-history-chat-0.1.13.vsix` using **Extensions → … → Install from VSIX**.
+1. Install the generated `azure-history-chat-0.1.14.vsix` using **Extensions → … → Install from VSIX**.
 2. Open **Azure Chat** in the activity bar and click **Connection**.
 3. Enter your sample app's base URL, for example `https://your-chat-app.azurewebsites.net`. This is the chat application URL, not the Azure OpenAI resource URL.
 4. Paste a user bearer token accepted by that app's authentication layer. The token is stored in VS Code SecretStorage and never sent to the webview. Repeat Connection to replace an expired token; leave the token field blank to retain it.
@@ -24,7 +24,7 @@ The extension does not select a model. Your Azure backend must be configured to 
 - Click an attachment to remove it before sending. The combined default limit is 200 KB, adjustable in `azureChat.maxAttachmentBytes`. The server's context limit still applies.
 - Send with the button or Enter. Shift+Enter inserts a new line. Your draft stays in the chatbox until the reply is successfully saved. Failed or cancelled sends restore the previous local chat view. Failed saves retain the completed reply internally for **Retry saving reply**. A newer draft typed while sending is preserved. **Stop** cancels the client request; backend generation may already have saved the user message.
 - Select a chat from history and use **Delete chat** to remove it and its messages after confirmation. Save any pending reply first.
-- Code appears in collapsed accordions. File-specific blocks are grouped under their relative path, with green `+` and red `−` line counts; unnamed examples each have a **code** accordion. Expanded code uses the page's vertical scrolling. **Open in editor** opens the actual project file when it exists, otherwise a read-only preview labelled with the proposed path. Expanded state and horizontal scroll positions survive updates. **Copy reply** copies the original Markdown.
+- Code accordions open while a reply is being generated and collapse together when generation finishes. File-specific blocks are grouped under their relative path, with green `+` and red `−` line counts; unnamed examples each have a **code** accordion. Expanded code uses the page's vertical scrolling. **Open in editor** opens the actual project file when it exists, otherwise a read-only preview labelled with the proposed path. After generation, manual expansion and horizontal scroll positions survive updates. **Copy reply** copies the original Markdown.
 - All attachments travel as text within JSON. There are no uploads, image inputs, or native model tools. Attached text becomes part of server chat history.
 
 ## Workspace skills

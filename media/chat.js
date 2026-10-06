@@ -70,6 +70,7 @@ window.addEventListener('message',event=>{
     return;
   }
   if(event.data.type!=='state')return;
+  const finishedGenerating=!!state.generating && !event.data.generating;
   state=event.data;
   if(state.tokens){
     element('context-tokens').textContent=`Chat context: ~${state.tokens.context.toLocaleString()} tokens`;
@@ -89,6 +90,7 @@ window.addEventListener('message',event=>{
     const scroll=card.querySelector('.code-scroll');
     codeViews.set(card.dataset.codeKey,{open:card.open,top:scroll.scrollTop,left:scroll.scrollLeft});
   }
+  if(finishedGenerating)for(const saved of codeViews.values())saved.open=false;
   while(codeViews.size>500)codeViews.delete(codeViews.keys().next().value);
   messages.replaceChildren();
   let sourceUser='';
@@ -118,7 +120,7 @@ window.addEventListener('message',event=>{
         openCode:(block,path)=>send('open-code',{text:block.code,path:path || '',language:block.language}),
         applyCode:(block,path)=>send('apply-code',{text:block.code,path,kind:block.kind}),
         highlight:(code,language)=>window.hljs.getLanguage(language) ? window.hljs.highlight(code,{language,ignoreIllegals:true}).value : markdown.utils.escapeHtml(code)});
-      const saved=codeViews.get(key);if(saved)card.open=saved.open;
+      const saved=codeViews.get(key);card.open=!!state.generating || !!saved?.open;
       body.querySelector(`[data-code-slot="${group.slot}"]`)?.replaceWith(card);
       if(saved){const scroll=card.querySelector('.code-scroll');scroll.scrollTop=saved.top;scroll.scrollLeft=saved.left;}
     });

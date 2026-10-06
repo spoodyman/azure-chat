@@ -1,0 +1,23 @@
+<idea-plugin>
+    <id>com.azurehistorychat.plugin</id>
+    <name>Azure History Chat</name>
+    <vendor url="https://github.com/spoodyman/azure-chat">Azure History Chat</vendor>
+    <description><![CDATA[
+        Chat with the Microsoft Azure OpenAI Chat sample and Cosmos DB history.
+        Includes streaming, pinned files, selected code, workspace skills, token estimates,
+        and reviewed file proposals. Configure your deployed chat app URL and user bearer token.
+    ]]></description>
+    <depends>com.intellij.modules.platform</depends>
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="Azure Chat" anchor="right" factoryClass="com.azurehistorychat.ChatToolWindowFactory" icon="/web/icon.svg"/>
+        <applicationService serviceImplementation="com.azurehistorychat.ChatSettings"/>
+        <projectService serviceImplementation="com.azurehistorychat.ChatService"/>
+    </extensions>
+    <actions>
+        <action id="AzureChat.Configure" class="com.azurehistorychat.ConfigureAction" text="Azure Chat: Configure Connection"/>
+        <action id="AzureChat.AttachSelection" class="com.azurehistorychat.AttachSelectionAction" text="Azure Chat: Attach Selection">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+        </action>
+        <action id="AzureChat.ShowApiLog" class="com.azurehistorychat.ShowApiLogAction" text="Azure Chat: Show API Log"/>
+    </actions>
+</idea-plugin>

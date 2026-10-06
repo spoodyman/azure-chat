@@ -54,6 +54,31 @@ class AzureClientTest {
             assertEquals(List.of("GET /history/list?offset=0", "GET /history/read/chat", "POST /history/generate", "POST /history/update", "DELETE /history/delete"), routes);
         }
     }
+    @Test void skillsGenerateWithoutSyntheticHistoryAndSaveTheSamePrompt() throws Exception {
+        server.createContext("/history/generate", exchange -> {
+            JsonObject body=JsonParser.parseString(new String(exchange.getRequestBody().readAllBytes(), StandardCharsets.UTF_8)).getAsJsonObject();
+            bodies.add(body);
+            for(JsonElement value:body.getAsJsonArray("messages")) {
+                JsonObject item=value.getAsJsonObject();
+                if(string(item,"role").equals("system") || string(item,"id").isEmpty() || string(item,"date").isEmpty()) {
+                    respond(exchange,500,"{\"error\":\"Error collecting message history\"}");return;
+                }
+            }
+            respond(exchange,200,"{\"id\":\"answer\",\"history_metadata\":{\"conversation_id\":\"chat\"},\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"Done\"}}]}");
+        });
+        JsonArray original=new JsonArray();original.add(message("user","Write tests"));
+        JsonArray skills=new JsonArray();skills.add(object("name","Test/test.md","content","Use a fake service."));
+        JsonArray input=withCodeContext(withSkills(original,skills),true);
+        try(AzureClient client=new AzureClient(base,"private-token","GET",null)) {
+            AzureClient.Generation response=client.generate(input,null,new AzureClient.Cancellation(),(text,metadata)->{});
+            JsonArray saved=input.deepCopy();saved.add(response.message());
+            client.json("/history/update",object("conversation_id","chat","messages",saved),"POST");
+            assertEquals(1,bodies.getFirst().getAsJsonArray("messages").size());
+            assertEquals(input.get(0),bodies.getLast().getAsJsonArray("messages").get(0));
+            assertTrue(string(input.get(0).getAsJsonObject(),"content").contains("Use a fake service."));
+            assertEquals("Write tests",string(original.get(0).getAsJsonObject(),"content"));
+        }
+    }
     @Test void supportsPostReadAndNewConversationRequests() throws Exception {
         try (AzureClient client = new AzureClient(base, "private-token", "POST", null)) {
             client.read("chat"); assertEquals("chat", string(bodies.getFirst(), "conversation_id"));

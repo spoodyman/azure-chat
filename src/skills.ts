@@ -71,10 +71,11 @@ export async function readSkills(skills: Skill[], maxBytes: number): Promise<Ski
   return result;
 }
 
-// Keep the final user message unchanged: generation may persist it on the backend.
-// This temporary context never enters the local conversation or history updates.
+// Keep history free of synthetic entries by including skills in the real user prompt.
 export function withSkills(messages: Message[], skills: SkillContext[]): Message[] {
-  if (!skills.length) return [...messages];
-  const context: Message = {id:'workspace-skills',role:'system',content:'Use these selected workspace skills for this response. Each entry contains its relative file name and instructions.\n\nSelected skills (JSON):\n' + JSON.stringify(skills)};
-  return [...messages.slice(0,-1),context,...messages.slice(-1)];
+  if (!skills.length || !messages.length) return [...messages];
+  const user = messages[messages.length - 1];
+  if (user.role !== 'user') throw new Error('Skills require a final user message.');
+  const context = 'Use these selected workspace skills for this response. Each entry contains its relative file name and instructions.\n\nSelected skills (JSON):\n' + JSON.stringify(skills);
+  return [...messages.slice(0,-1), {...user, content:context + '\n\nUser request:\n' + user.content}];
 }

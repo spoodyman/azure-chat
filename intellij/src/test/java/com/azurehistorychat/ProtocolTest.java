@@ -32,12 +32,16 @@ class ProtocolTest {
         assertThrows(IllegalArgumentException.class, () -> changes(block + block.replace("test.java", "TEST.java")));
         assertThrows(RuntimeException.class, () -> changes("```azure-files\n{\"files\":[{\"path\":\"a\",\"content\":42}]}\n```"));
     }
-    @Test void skillsOnlyEnterGenerationAndLeaveFinalUserMessageUnchanged() {
+    @Test void skillsEnrichUserPromptWithoutInventingHistoryMessages() {
         JsonArray messages = new JsonArray(); JsonObject user = message("user", "question"); messages.add(user);
         JsonArray skills = new JsonArray(); skills.add(object("name", "Test/test.md", "content", "instructions"));
         JsonArray request = withSkills(messages, skills);
-        assertEquals(1, messages.size()); assertEquals(2, request.size());
-        assertEquals(user, request.get(1)); assertEquals("system", string(request.get(0).getAsJsonObject(), "role"));
+        assertEquals(1, messages.size()); assertEquals(1, request.size());
+        JsonObject prompt = request.get(0).getAsJsonObject();
+        assertEquals(string(user,"id"),string(prompt,"id")); assertEquals(string(user,"date"),string(prompt,"date"));
+        assertEquals("user",string(prompt,"role")); assertEquals("question",string(user,"content"));
+        assertTrue(string(prompt,"content").contains("Test/test.md")); assertTrue(string(prompt,"content").endsWith("question"));
+        assertEquals(new JsonArray(),withSkills(new JsonArray(),skills));
     }
     @Test void preservesUnknownHistoryFieldsAndNormalizesDates() {
         JsonArray messages = new JsonArray(); messages.add(object("id", "server", "role", "user", "content", "text", "createdAt", "yesterday", "feedback", object("score", 1), "prompt_fragments", List.of("context")));
@@ -45,14 +49,17 @@ class ProtocolTest {
         assertEquals("yesterday", string(wire, "date")); assertFalse(wire.has("createdAt"));
         assertTrue(wire.has("feedback")); assertTrue(wire.has("prompt_fragments")); assertTrue(messages.get(0).getAsJsonObject().has("createdAt"));
     }
-    @Test void codeResponseInstructionsAreTransientAndKeepFinalUserMessage() {
+    @Test void codeResponseInstructionsAndSkillsKeepUserIdentityAndOriginalHistory() {
         JsonArray messages=new JsonArray();JsonObject user=message("user","Update src/a.ts");messages.add(user);
         JsonArray skills=new JsonArray();skills.add(object("name","skill.md","content","Follow these instructions"));
         JsonArray input=withCodeContext(withSkills(messages,skills),true);
-        assertEquals(3,input.size());assertEquals(user,input.get(2));
-        assertEquals("code-response-format",string(input.get(1).getAsJsonObject(),"id"));
-        assertTrue(string(input.get(1).getAsJsonObject(),"content").contains("project-relative file path"));
-        assertTrue(string(input.get(1).getAsJsonObject(),"content").contains("Do not treat an attached selection as a complete file"));
+        assertEquals(1,input.size());JsonObject prompt=input.get(0).getAsJsonObject();
+        assertEquals(string(user,"id"),string(prompt,"id"));assertEquals(string(user,"date"),string(prompt,"date"));
+        assertTrue(string(prompt,"content").contains("project-relative file path"));
+        assertTrue(string(prompt,"content").contains("Do not treat an attached selection as a complete file"));
+        assertTrue(string(prompt,"content").contains("Follow these instructions"));
+        assertEquals("Update src/a.ts",string(user,"content"));
+        assertEquals(string(withSkills(messages,skills).get(0).getAsJsonObject(),"content"),displayPrompt(string(prompt,"content")));
         assertEquals(1,messages.size());assertEquals(user,messages.get(0));
         assertEquals(messages,withCodeContext(messages,false));
     }

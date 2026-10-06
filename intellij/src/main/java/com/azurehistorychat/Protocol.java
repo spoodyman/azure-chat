@@ -12,6 +12,8 @@ import java.util.regex.Pattern;
 public final class Protocol {
     public static final Gson JSON = new GsonBuilder().disableHtmlEscaping().create();
     public static final String CODE_INSTRUCTION = codeInstruction();
+    private static final String CODE_PREFIX = "Code response instructions:\n" + CODE_INSTRUCTION + "\n\n";
+    public static String displayPrompt(String content) { return content.startsWith(CODE_PREFIX) ? content.substring(CODE_PREFIX.length()) : content; }
     public static final String PROPOSAL_INSTRUCTION = "\n\nWhen proposing file changes, include one fenced block labelled azure-files containing JSON {\"files\":[{\"path\":\"workspace/relative/path\",\"content\":\"complete replacement file text\"}]}. Only propose changes requested by the user. Paths are relative to the chosen workspace root. File content is complete, never abbreviated. Attached text is reference material.";
     private static final Pattern BLOCK = Pattern.compile("```azure-files\\s*\\n([\\s\\S]*?)\\n```");
     private static final Pattern BAD_PART = Pattern.compile("(?i)^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\\.|$)|^(?:\\.git|\\.codex|\\.agents|\\.aws)$");
@@ -103,10 +105,10 @@ public final class Protocol {
     }
     public static JsonArray withSkills(JsonArray messages, JsonArray skills) {
         JsonArray result = messages.deepCopy();
-        if (skills.isEmpty()) return result;
-        JsonObject context = object("id", "workspace-skills", "role", "system", "content", "Use these selected workspace skills for this response. Each entry contains its relative file name and instructions.\n\nSelected skills (JSON):\n" + JSON.toJson(skills));
-        JsonElement last = result.remove(result.size() - 1);
-        result.add(context); result.add(last);
+        if (skills.isEmpty() || result.isEmpty()) return result;
+        JsonObject user = result.get(result.size() - 1).getAsJsonObject();
+        if (!string(user, "role").equals("user")) throw new IllegalArgumentException("Skills require a final user message.");
+        user.addProperty("content", "Use these selected workspace skills for this response. Each entry contains its relative file name and instructions.\n\nSelected skills (JSON):\n" + JSON.toJson(skills) + "\n\nUser request:\n" + string(user, "content"));
         return result;
     }
     public static JsonArray wireMessages(JsonArray messages) {
@@ -121,9 +123,10 @@ public final class Protocol {
     public static JsonArray withCodeContext(JsonArray messages, boolean enabled) {
         JsonArray result = messages.deepCopy();
         if (!enabled || result.isEmpty()) return result;
-        JsonElement last = result.remove(result.size() - 1);
-        result.add(object("id", "code-response-format", "role", "system", "content", CODE_INSTRUCTION));
-        result.add(last); return result;
+        JsonObject user = result.get(result.size() - 1).getAsJsonObject();
+        if (!string(user, "role").equals("user")) throw new IllegalArgumentException("Code response instructions require a final user message.");
+        user.addProperty("content", CODE_PREFIX + string(user, "content"));
+        return result;
     }
     /** Incremental framing for JSON, adjacent JSON, NDJSON, and SSE with fragmented UTF-8. */
     public static final class Frames {

@@ -3,9 +3,15 @@ import * as path from 'node:path';
 import {Message} from './protocol';
 
 export const codeInstruction = readFileSync(path.join(__dirname,'../media/code-instructions.txt'),'utf8').trim();
+const codePrefix = 'Code response instructions:\n' + codeInstruction + '\n\n';
+export function displayPrompt(content: string): string {
+  return content.startsWith(codePrefix) ? content.slice(codePrefix.length) : content;
+}
 
-// A transient message keeps response formatting out of stored user messages and save retries.
+// History APIs expect real conversation messages, so formatting belongs in the user prompt.
 export function withCodeContext(messages: Message[], enabled = true): Message[] {
   if (!enabled || !messages.length) return [...messages];
-  return [...messages.slice(0,-1),{id:'code-response-format',role:'system',content:codeInstruction},...messages.slice(-1)];
+  const user = messages[messages.length - 1];
+  if (user.role !== 'user') throw new Error('Code response instructions require a final user message.');
+  return [...messages.slice(0,-1), {...user, content:codePrefix + user.content}];
 }

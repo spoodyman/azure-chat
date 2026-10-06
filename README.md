@@ -6,7 +6,7 @@ An [IntelliJ IDEA version](intellij/README.md) is also available in `intellij/`,
 
 ## Install and connect
 
-1. Install the generated `azure-history-chat-0.1.7.vsix` using **Extensions → … → Install from VSIX**.
+1. Install the generated `azure-history-chat-0.1.8.vsix` using **Extensions → … → Install from VSIX**.
 2. Open **Azure Chat** in the activity bar and click **Connection**.
 3. Enter your sample app's base URL, for example `https://your-chat-app.azurewebsites.net`. This is the chat application URL, not the Azure OpenAI resource URL.
 4. Paste a user bearer token accepted by that app's authentication layer. The token is stored in VS Code SecretStorage and never sent to the webview. Repeat Connection to replace an expired token; leave the token field blank to retain it.
@@ -45,7 +45,7 @@ Use **New skill** above the message box to create a file such as `Test/write-com
 
 Click **Skills (selected/total)** to expand or collapse the picker; its expanded state is remembered. Search by file or folder name and check multiple skills to include them as context. The heading counts all available skills, even while filtering. Selected skills remain visible when filtering; click a selected skill to remove it. Files appear automatically when created, changed or deleted. In a workspace with multiple roots, names include the workspace folder. Skills require a trusted workspace.
 
-Each generation reads the latest selected contents, including unsaved editor changes. Skills are sent as a temporary context message only to `/history/generate`; they are excluded from `/history/update`, including save retries. Selection remains active for later messages until removed. Selected skills and attachments share the `azureChat.maxAttachmentBytes` limit.
+Each generation reads the latest selected contents, including unsaved editor changes. Skills are included in the outgoing user prompt, with its normal message ID and date; no synthetic system messages are added to history. The same prompt is retained in history updates and save retries, so reopened chats reflect what the model received. Removing a selection excludes it from future prompts; earlier saved prompts retain their skill contents. Selected skills and attachments share the `azureChat.maxAttachmentBytes` limit.
 
 ## Token usage
 

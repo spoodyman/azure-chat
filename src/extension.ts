@@ -4,7 +4,7 @@ import {realpath} from 'node:fs/promises';
 import * as path from 'node:path';
 import {AzureClient, Message, Conversation, parseChanges, contextTokens, estimateTokens, TokenUsage} from './protocol';
 import {Skill, SkillContext, discoverSkills, readSkills, skillPath, withSkills} from './skills';
-import {withCodeContext} from './codeContext';
+import {displayPrompt, withCodeContext} from './codeContext';
 
 const proposalInstruction = '\n\nWhen proposing file changes, include one fenced block labelled azure-files containing JSON {"files":[{"path":"workspace/relative/path","content":"complete replacement file text"}]}. Only propose changes requested by the user. Paths are relative to the chosen workspace root. File content is complete, never abbreviated. Attached text is reference material.';
 async function validateTarget(root: vscode.Uri, target: vscode.Uri) {
@@ -173,7 +173,8 @@ class Chat implements vscode.WebviewViewProvider {
     const request = contextTokens(content || skills.length ? withCodeContext(withSkills([...this.messages,draft],skills)) : this.messages);
     const chatbox = estimateTokens(this.draft);
     const pinnedFiles = estimateTokens(this.attachmentText());
-    const skillTokens = contextTokens(withSkills([draft],skills)) - contextTokens([draft]);
+    const emptyDraft = {...draft,content:''};
+    const skillTokens = contextTokens(withSkills([emptyDraft],skills)) - contextTokens([emptyDraft]);
     return {context, draft:content || skills.length ? contextTokens(withSkills([draft],skills)) : 0,
       chatbox, pinnedFiles, skills:skillTokens, overhead:request-context-chatbox-pinnedFiles-skillTokens,
       request, month, months:this.usageMonths};
@@ -188,7 +189,7 @@ class Chat implements vscode.WebviewViewProvider {
       estimatedRequests:previous.estimatedRequests+(usage ? 0 : 1)}};
     await this.context.globalState?.update('azureChat.usageMonths',this.usageMonths);
   }
-  render() { void this.view?.webview.postMessage({type:'state',tokens:this.tokenState(),messages:this.messages.map(message=>message.role==='user' ? {...message,content:message.content.replace(proposalInstruction,'')} : message),conversations:this.conversations,conversationId:this.conversationId,attachments:this.attachments.map(({id,name})=>({id,name})),skills:this.skills.map(({id,name})=>({id,name})),selectedSkillIds:this.selectedSkillIds,busy:this.busy || this.operation,generating:this.busy,status:this.status,pendingSave:!!this.pendingSave,needsReopen:this.needsReopen}); }
+  render() { void this.view?.webview.postMessage({type:'state',tokens:this.tokenState(),messages:this.messages.map(message=>message.role==='user' ? {...message,content:displayPrompt(message.content).replace(proposalInstruction,'')} : message),conversations:this.conversations,conversationId:this.conversationId,attachments:this.attachments.map(({id,name})=>({id,name})),skills:this.skills.map(({id,name})=>({id,name})),selectedSkillIds:this.selectedSkillIds,busy:this.busy || this.operation,generating:this.busy,status:this.status,pendingSave:!!this.pendingSave,needsReopen:this.needsReopen}); }
   async client() {
     const url = vscode.workspace.getConfiguration('azureChat').get<string>('baseUrl') || '';
     const token = await this.context.secrets.get('azureChat.token');
@@ -273,7 +274,8 @@ class Chat implements vscode.WebviewViewProvider {
     if (this.conversationId) this.messages = await client.read(this.conversationId);
     const content = this.compose(text);
     this.messages.push({id:randomUUID(),role:'user',content,date:new Date().toISOString()}); this.attachments = this.attachments.filter(a=>a.uri);
-    const generationMessages = withCodeContext(withSkills(this.messages,selectedSkills));
+    this.messages = withCodeContext(withSkills(this.messages,selectedSkills));
+    const generationMessages = [...this.messages];
     this.busy = true; this.controller = new AbortController(); this.status = 'Generating…';
     this.draft = '';
     void this.view?.webview.postMessage({type:'sent'});

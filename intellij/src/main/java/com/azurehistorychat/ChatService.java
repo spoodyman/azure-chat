@@ -205,7 +205,8 @@ public final class ChatService implements Disposable {
         try (AzureClient client = client()) {
             if (conversationId != null) messages = client.read(conversationId);
             messages.add(message("user", compose(text, attached)));
-            JsonArray input = withCodeContext(withSkills(messages, selectedSkills),true);
+            messages = withCodeContext(withSkills(messages, selectedSkills),true);
+            JsonArray input = messages.deepCopy();
             attachments.removeIf(value -> value.pinned() == null);
             generating = true; cancellation = new AzureClient.Cancellation(); draft = ""; status = "Generating…"; emit(object("type", "sent"));
             JsonObject placeholder = message("assistant", ""); messages.add(placeholder); render();
@@ -239,7 +240,7 @@ public final class ChatService implements Disposable {
         String content = compose(draft, attached); JsonArray next = messages.deepCopy(); JsonObject user = message("user", content);
         boolean hasDraft = !content.isEmpty() || !selectedSkills.isEmpty(); if (hasDraft) next.add(user);
         long context = contextTokens(messages), request = contextTokens(hasDraft ? withCodeContext(withSkills(next, selectedSkills),true) : next);
-        JsonArray single = new JsonArray(); single.add(user);
+        JsonArray single = new JsonArray(); single.add(message("user", ""));
         long skillTokens = contextTokens(withSkills(single, selectedSkills)) - contextTokens(single);
         long chatbox = estimate(draft), pinned = estimate(attachmentText(attached));
         return object("context", context, "chatbox", chatbox, "pinnedFiles", pinned, "skills", skillTokens, "overhead", request - context - chatbox - pinned - skillTokens, "request", request, "month", java.time.YearMonth.now().toString(), "months", ChatSettings.getInstance().months());
@@ -249,7 +250,7 @@ public final class ChatService implements Disposable {
         JsonObject tokens;
         try { tokens = tokenState(); } catch (Exception error) { tokens = object("context", contextTokens(messages), "chatbox", estimate(draft), "pinnedFiles", 0, "skills", 0, "overhead", 0, "request", contextTokens(messages) + estimate(draft), "month", java.time.YearMonth.now().toString(), "months", ChatSettings.getInstance().months()); if (!operation) status = errorMessage(error); }
         JsonArray shown = messages.deepCopy();
-        for (JsonElement value : shown) { JsonObject message = value.getAsJsonObject(); if (string(message, "role").equals("user")) message.addProperty("content", string(message, "content").replace(PROPOSAL_INSTRUCTION, "")); }
+        for (JsonElement value : shown) { JsonObject message = value.getAsJsonObject(); if (string(message, "role").equals("user")) message.addProperty("content", displayPrompt(string(message, "content")).replace(PROPOSAL_INSTRUCTION, "")); }
         JsonArray skillList = new JsonArray(); for (Workspace.Skill skill : skills) skillList.add(object("id", skill.id(), "name", skill.name()));
         JsonArray attachmentList = new JsonArray(); for (Attachment item : attachments) attachmentList.add(object("id", item.id(), "name", item.name()));
         emit(object("type", "state", "tokens", tokens, "messages", shown, "conversations", conversations, "conversationId", conversationId, "attachments", attachmentList, "skills", skillList, "selectedSkillIds", selected, "busy", operation, "generating", generating, "status", status, "pendingSave", pendingSave != null, "needsReopen", needsReopen));

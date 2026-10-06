@@ -4,8 +4,8 @@ The IntelliJ counterpart of the VS Code extension in this repository. It uses th
 
 ## Install and connect
 
-1. Download the [prebuilt plugin ZIP](dist/azure-history-chat-intellij-0.1.10.zip) from this repository. To build from source, use `./mvnw clean verify` (Windows: `.\mvnw.cmd clean verify`) with JDK 21 or newer; installed Maven also supports `mvn clean verify`.
-2. In IntelliJ, open **Settings → Plugins → ⚙ → Install Plugin from Disk** and choose the downloaded ZIP (or `target/azure-history-chat-intellij-0.1.10.zip` for a local build), then restart when prompted.
+1. Download the [prebuilt plugin ZIP](dist/azure-history-chat-intellij-0.1.11.zip) from this repository. To build from source, follow the [local IntelliJ SDK setup](#diagnostics-and-development) below.
+2. In IntelliJ, open **Settings → Plugins → ⚙ → Install Plugin from Disk** and choose the downloaded ZIP (or `target/azure-history-chat-intellij-0.1.11.zip` for a local build), then restart when prompted.
 3. Open **View → Tool Windows → Azure Chat** and click **Connection**.
 4. Enter the deployed Microsoft Azure OpenAI Chat sample application URL and a user bearer token accepted by its authentication layer. This is the application URL, not the Azure OpenAI resource endpoint. Tokens are stored in IntelliJ Password Safe, separately for each application URL, and are never passed to the embedded UI. Leave the token field blank to retain the token for that URL.
 5. Select **POST** history reads for the Microsoft sample's `POST /history/read` endpoint, or **GET** for backends exposing `/history/read/{id}`.
@@ -31,19 +31,26 @@ Use **Azure Chat: Show API Log** in Find Action to enable logging and show the *
 
 ```powershell
 cd intellij
-.\mvnw.cmd clean verify
-.\mvnw.cmd test
+$intellijHome = 'C:\Program Files\JetBrains\IntelliJ IDEA 2026.2.3'
+$env:JAVA_HOME = Join-Path $intellijHome 'jbr'
+.\mvnw.cmd "-Didea.home=$intellijHome" clean verify
+.\mvnw.cmd "-Didea.home=$intellijHome" test
+
+# Once Maven Central dependencies and the Maven wrapper are cached, build offline:
+.\mvnw.cmd -o "-Didea.home=$intellijHome" clean verify
 
 # Check plugin structure and binary compatibility against an installed IDE:
-.\mvnw.cmd -Pverify-plugin "-Didea.home=C:\path\to\IntelliJ IDEA 2026.2.3" verify
+.\mvnw.cmd -Pverify-plugin "-Didea.home=$intellijHome" "-Dplugin.verifier.jar=C:\tools\verifier-cli-1.410-all.jar" verify
 
 # Run a separate development IDE with isolated configuration, caches and plugins:
-.\mvnw.cmd -Prun-ide "-Didea.home=C:\path\to\IntelliJ IDEA 2026.2.3" verify
+.\mvnw.cmd -Prun-ide "-Didea.home=$intellijHome" verify
 ```
 
-The Maven wrapper pins Maven 3.9.16. `pom.xml` compiles Java 21 against IntelliJ 2024.3.6 platform modules (build 243.26574.91) from JetBrains' Maven repositories. IDE dependencies use `provided` scope, so the installable ZIP contains only this plugin and its application libraries. Maven copies shared assets from `../media`, filters the plugin descriptor version and compatibility range, runs JUnit 5 with Surefire, and creates the plugin ZIP using Assembly. Build from this repository rather than copying the `intellij` folder alone. Open `pom.xml` as a Maven project for IDE development.
+The Maven wrapper pins Maven 3.9.16. The build has no JetBrains Maven repositories or downloaded IntelliJ platform dependencies. Set `idea.home` to an installed or extracted IntelliJ IDEA distribution from builds 243–262. Maven reads compilation libraries from its `lib/`, bundled JCEF plugin, and legacy JBR JCEF JAR. These SDK libraries never enter the plugin ZIP. Gson, JUnit, and Maven plugins still come from Maven Central; Maven offline mode (`-o`) works after those dependencies and the wrapper have been cached. The normal build does not download an IDE or contact JetBrains repositories.
 
-`clean verify` runs tests and builds `target/azure-history-chat-intellij-0.1.10.zip`. The optional `verify-plugin` profile downloads the pinned JetBrains Plugin Verifier and checks the ZIP against `idea.home`; reports are saved under `target/plugin-verifier`. Compatibility failures, invalid descriptors, internal API uses, and invalid override-only API uses fail the Maven build. Experimental project-trust API reports remain informational. The `run-ide` profile stages the plugin under `target/sandbox/plugins`, then launches `idea.home` with separate settings, caches, and logs. It does not modify the installed IDE's normal profile. Use a supported IDE with its bundled JetBrains Runtime; on macOS set `idea.home` to `IntelliJ IDEA.app/Contents`. Override `-Didea.executable` if the installation uses a different launcher. Both profiles require an existing IDE installation; ordinary builds download platform module dependencies without downloading a complete IDE.
+When compiling against build 262, run Maven on JDK 25 or newer; the IDE's bundled `jbr` directory supplies a suitable JDK on Windows and Linux. With a 2024.3–2026.1 SDK, JDK 21 or newer is sufficient. The output remains Java 21 bytecode. On macOS, `idea.home` is `IntelliJ IDEA.app/Contents`, and the bundled Java home is typically `Contents/jbr/Contents/Home`. Build from the repository so shared `../media` assets are present. Maven copies those assets, filters the descriptor, runs JUnit 5, and creates the plugin ZIP. IDEs importing the POM may need the local IntelliJ SDK libraries configured separately for editor code analysis; the Maven command above supplies the compilation classpath directly.
+
+`clean verify` runs tests and builds `target/azure-history-chat-intellij-0.1.11.zip`. The optional `verify-plugin` profile requires a local Plugin Verifier JAR supplied through `plugin.verifier.jar`; it does not resolve the verifier from a JetBrains Maven repository. Reports are saved under `target/plugin-verifier`. The verifier itself may access JetBrains Marketplace to resolve plugin dependencies; it is separate from the normal build. Compatibility failures, invalid descriptors, internal API uses, and invalid override-only API uses fail verification. Experimental project-trust API reports remain informational. The `run-ide` profile stages the plugin under `target/sandbox/plugins`, then launches `idea.home` with separate settings, caches, and logs. It does not modify the installed IDE's normal profile. Override `-Didea.executable` if the installation uses a different launcher.
 
 Protocol tests use a local mock HTTP server and cover history contracts, fragmented UTF-8 streaming, cancellation, redaction, redirect rejection, usage counts, skill prompts, and proposal path validation. They do not connect to Azure. The Maven build does not need IntelliJ's test bootstrap or a separate JUnit 4 dependency.
 
@@ -51,4 +58,4 @@ Verified locally: plugin ZIP creation, descriptor validation, and binary compati
 
 For a manual smoke test, launch the `run-ide` profile, open a trusted project, configure a test backend, reopen history, send a follow-up and verify it persisted, pin an unsaved editor file, attach a selection, select and edit skills, cancel a generation, retry a failed history save, and review a new-file and replacement proposal. Also verify clipboard buttons, collapsed skill picker restoration, and the API console. The backend and interactive IDE flow require this manual check.
 
-The plugin targets builds 243–262, including IntelliJ IDEA 2026.2.3 (`IU-262.10968.63`). It declares the bundled `com.intellij.modules.jcef` dependency using an optional descriptor: older supported IDEs provide JCEF in core, while build 262 loads it from the bundled Web Browser plugin. Compilation still uses the 2024.3 platform API and Java 21 bytecode to retain compatibility with older IDEs; run build 262 using its bundled JetBrains Runtime 25. See [JetBrains' 2026.2 API changes](https://plugins.jetbrains.com/docs/intellij/api-changes-list-2026.html#2026-2).
+The plugin targets builds 243–262, including IntelliJ IDEA 2026.2.3 (`IU-262.10968.63`). It declares the bundled `com.intellij.modules.jcef` dependency using an optional descriptor: older supported IDEs provide JCEF in core, while build 262 loads it from the bundled Web Browser plugin. Compilation uses the local SDK selected with `idea.home` and emits Java 21 bytecode; run build 262 using its bundled JetBrains Runtime 25. See [JetBrains' 2026.2 API changes](https://plugins.jetbrains.com/docs/intellij/api-changes-list-2026.html#2026-2).

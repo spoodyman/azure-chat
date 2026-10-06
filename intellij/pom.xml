@@ -5,7 +5,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>com.azurehistorychat</groupId>
     <artifactId>azure-history-chat-intellij</artifactId>
-    <version>0.1.10</version>
+    <version>0.1.11</version>
     <name>Azure History Chat</name>
     <description>Azure chat history, code context, and reviewed file proposals for IntelliJ IDEA.</description>
 
@@ -13,60 +13,14 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <maven.compiler.release>21</maven.compiler.release>
-        <idea.build>243.26574.91</idea.build>
         <idea.sinceBuild>243</idea.sinceBuild>
         <idea.untilBuild>262.*</idea.untilBuild>
-        <plugin.verifier.version>1.410</plugin.verifier.version>
         <idea.executable>${idea.home}/bin/idea.sh</idea.executable>
     </properties>
 
-    <repositories>
-        <repository>
-            <id>intellij-releases</id>
-            <url>https://www.jetbrains.com/intellij-repository/releases</url>
-            <snapshots><enabled>false</enabled></snapshots>
-        </repository>
-        <repository>
-            <id>intellij-dependencies</id>
-            <url>https://cache-redirector.jetbrains.com/intellij-dependencies</url>
-            <snapshots><enabled>false</enabled></snapshots>
-        </repository>
-    </repositories>
-
-    <!-- IDE libraries are supplied by IntelliJ at runtime and never enter the plugin ZIP. -->
+    <!-- Only application and test libraries come from Maven Central.
+         IntelliJ APIs come from the local installation supplied with -Didea.home. -->
     <dependencies>
-        <dependency>
-            <groupId>com.jetbrains.intellij.platform</groupId><artifactId>ide</artifactId>
-            <version>${idea.build}</version><scope>provided</scope>
-        </dependency>
-        <dependency>
-            <groupId>com.jetbrains.intellij.platform</groupId><artifactId>ide-impl</artifactId>
-            <version>${idea.build}</version><scope>provided</scope>
-        </dependency>
-        <dependency>
-            <groupId>com.jetbrains.intellij.platform</groupId><artifactId>ui-jcef</artifactId>
-            <version>${idea.build}</version><scope>provided</scope>
-        </dependency>
-        <dependency>
-            <groupId>com.jetbrains.intellij.platform</groupId><artifactId>execution</artifactId>
-            <version>${idea.build}</version><scope>provided</scope>
-        </dependency>
-        <dependency>
-            <groupId>com.jetbrains.intellij.platform</groupId><artifactId>diff</artifactId>
-            <version>${idea.build}</version><scope>provided</scope>
-        </dependency>
-        <dependency>
-            <groupId>com.jetbrains.intellij.platform</groupId><artifactId>credential-store</artifactId>
-            <version>${idea.build}</version><scope>provided</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.jetbrains.kotlin</groupId><artifactId>kotlin-stdlib</artifactId>
-            <version>2.0.21</version><scope>provided</scope>
-        </dependency>
-        <dependency>
-            <groupId>org.jetbrains</groupId><artifactId>annotations</artifactId>
-            <version>24.0.0</version><scope>provided</scope>
-        </dependency>
         <dependency>
             <groupId>com.google.code.gson</groupId><artifactId>gson</artifactId><version>2.11.0</version>
         </dependency>
@@ -100,6 +54,9 @@
                 <groupId>org.apache.maven.plugins</groupId><artifactId>maven-enforcer-plugin</artifactId><version>3.5.0</version>
                 <executions><execution><id>build-requirements</id><goals><goal>enforce</goal></goals>
                     <configuration><rules><requireJavaVersion><version>[21,)</version></requireJavaVersion>
+                        <requireProperty><property>idea.home</property>
+                            <message>Set -Didea.home to your installed IntelliJ IDEA directory (on macOS use IntelliJ IDEA.app/Contents). No JetBrains Maven repositories are needed.</message>
+                        </requireProperty>
                         <requireMavenVersion><version>[3.9.9,)</version></requireMavenVersion></rules></configuration>
                 </execution></executions>
             </plugin>
@@ -110,7 +67,44 @@
                 <groupId>org.apache.maven.plugins</groupId><artifactId>maven-resources-plugin</artifactId><version>3.3.1</version>
             </plugin>
             <plugin>
+                <groupId>org.apache.maven.plugins</groupId><artifactId>maven-antrun-plugin</artifactId><version>3.1.0</version>
+                <executions><execution><id>local-intellij-classpath</id><phase>generate-sources</phase><goals><goal>run</goal></goals>
+                    <configuration><exportAntProperties>true</exportAntProperties><target>
+                        <fail message="idea.home must contain lib/ and build.txt. Point to the IntelliJ installation, not a project or its bin directory.">
+                            <condition><not><and><available file="${idea.home}/lib" type="dir"/><available file="${idea.home}/build.txt" type="file"/></and></not></condition>
+                        </fail>
+                        <loadfile property="local.ide.build" srcFile="${idea.home}/build.txt"><filterchain><striplinebreaks/></filterchain></loadfile>
+                        <fail message="Use an IntelliJ IDEA installation from builds 243 through 262 (2024.3 through 2026.2).">
+                            <condition><not><matches string="${local.ide.build}" pattern="^(IU|IC)-(24[3-9]|25[0-9]|26[0-2])\."/></not></condition>
+                        </fail>
+                        <fail message="IntelliJ build 262 libraries require Maven to run on JDK 25 or newer. Set JAVA_HOME to idea.home/jbr or another JDK 25 installation.">
+                            <condition><and><matches string="${local.ide.build}" pattern="^(IU|IC)-262\."/><not><javaversion atleast="25"/></not></and></condition>
+                        </fail>
+                        <path id="local.ide.jars">
+                            <fileset dir="${idea.home}/lib" includes="**/*.jar"/>
+                            <fileset dir="${idea.home}/plugins/jcef-plugin/lib" includes="**/*.jar" erroronmissingdir="false"/>
+                            <fileset dir="${idea.home}/jbr/lib" includes="jcef.jar" erroronmissingdir="false"/>
+                            <fileset dir="${idea.home}/jbr/Contents/Home/lib" includes="jcef.jar" erroronmissingdir="false"/>
+                        </path>
+                        <path id="local.ide.compile.path"><path refid="maven.compile.classpath"/><path refid="local.ide.jars"/></path>
+                        <path id="local.ide.test.path"><path refid="maven.test.classpath"/><path refid="local.ide.jars"/></path>
+                        <pathconvert property="local.ide.compile.classpath" refid="local.ide.compile.path"/>
+                        <pathconvert property="local.ide.test.classpath" refid="local.ide.test.path"/>
+                        <echo level="info" message="Compiling against local IntelliJ ${local.ide.build}; no IntelliJ Maven artifacts are resolved."/>
+                    </target></configuration>
+                </execution></executions>
+            </plugin>
+            <plugin>
                 <groupId>org.apache.maven.plugins</groupId><artifactId>maven-compiler-plugin</artifactId><version>3.14.1</version>
+                <configuration><proc>none</proc></configuration>
+                <executions>
+                    <execution><id>default-compile</id><configuration><compilerArgs>
+                        <arg>-classpath</arg><arg>${local.ide.compile.classpath}</arg>
+                    </compilerArgs></configuration></execution>
+                    <execution><id>default-testCompile</id><configuration><compilerArgs>
+                        <arg>-classpath</arg><arg>${local.ide.test.classpath}</arg>
+                    </compilerArgs></configuration></execution>
+                </executions>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId><artifactId>maven-surefire-plugin</artifactId><version>3.5.4</version>
@@ -145,27 +139,18 @@
             <build><plugins>
                 <plugin>
                     <groupId>org.apache.maven.plugins</groupId><artifactId>maven-enforcer-plugin</artifactId>
-                    <executions><execution><id>verifier-ide-home</id><goals><goal>enforce</goal></goals>
-                        <configuration><rules><requireProperty><property>idea.home</property>
-                            <message>Set -Didea.home to an IntelliJ installation with its bundled JetBrains Runtime (on macOS use the app's Contents folder).</message>
+                    <executions><execution><id>verifier-tool</id><goals><goal>enforce</goal></goals>
+                        <configuration><rules><requireProperty><property>plugin.verifier.jar</property>
+                            <message>Set -Dplugin.verifier.jar to an existing JetBrains Plugin Verifier all.jar. The build does not download the verifier from JetBrains repositories.</message>
                         </requireProperty></rules></configuration>
-                    </execution></executions>
-                </plugin>
-                <plugin>
-                    <groupId>org.apache.maven.plugins</groupId><artifactId>maven-dependency-plugin</artifactId><version>3.8.1</version>
-                    <executions><execution><id>download-verifier</id><phase>pre-integration-test</phase><goals><goal>copy</goal></goals>
-                        <configuration><artifactItems><artifactItem>
-                            <groupId>org.jetbrains.intellij.plugins</groupId><artifactId>verifier-cli</artifactId>
-                            <version>${plugin.verifier.version}</version><classifier>all</classifier><type>jar</type>
-                            <outputDirectory>${project.build.directory}/tools</outputDirectory><destFileName>plugin-verifier.jar</destFileName>
-                        </artifactItem></artifactItems></configuration>
                     </execution></executions>
                 </plugin>
                 <plugin>
                     <groupId>org.codehaus.mojo</groupId><artifactId>exec-maven-plugin</artifactId><version>3.5.0</version>
                     <executions><execution><id>verify-plugin</id><phase>verify</phase><goals><goal>exec</goal></goals>
                         <configuration><executable>${java.home}/bin/java</executable><arguments>
-                            <argument>-jar</argument><argument>${project.build.directory}/tools/plugin-verifier.jar</argument>
+                            <argument>-Dplugin.verifier.home.dir=${project.basedir}/.ide-cache/plugin-verifier</argument>
+                            <argument>-jar</argument><argument>${plugin.verifier.jar}</argument>
                             <argument>check-plugin</argument><argument>${project.build.directory}/${project.build.finalName}.zip</argument>
                             <argument>${idea.home}</argument><argument>-verification-reports-dir</argument>
                             <argument>${project.build.directory}/plugin-verifier</argument>

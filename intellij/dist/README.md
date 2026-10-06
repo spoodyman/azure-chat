@@ -1,9 +1,0 @@
-# IntelliJ plugin distribution
-
-`azure-history-chat-intellij-0.1.12.zip` is the current installable Maven build, checked into Git so it is available after pushing this repository to GitHub. It supports builds 243–262, including IntelliJ IDEA 2026.2.3 (`IU-262.10968.63`). Install it through **Settings → Plugins → Install Plugin from Disk**. Older distributions remain available with their original compatibility ranges.
-
-The adjacent `.sha256` file records the archive's SHA-256 checksum. Verify it with `Get-FileHash -Algorithm SHA256` on Windows or `sha256sum -c azure-history-chat-intellij-0.1.12.zip.sha256` on Linux.
-
-Version 0.1.12 fixes the empty tool window: its in-memory HTML uses a stable virtual file URL that the navigation guard and native bridge accept. Validation: 35 Java tests passed; one Windows symlink test was skipped. The build packaged successfully with Maven offline and the installed `IU-262.10968.63` SDK, without IntelliJ Maven artifacts or JetBrains repositories. The regression test calls the SDK's actual JCEF URL handling code. The fix was checked in a running IntelliJ session: Connection controls, the message box, JavaScript handlers, and the code renderer loaded successfully. A live Azure generation was not part of this UI check. Version 0.1.11 previously passed binary compatibility verification against builds 243 and 262; the UI fix introduces no new IntelliJ API calls.
-
-Build from the repository's `intellij` directory using `.\mvnw.cmd "-Didea.home=C:\path\to\IntelliJ IDEA" clean verify` (or `./mvnw` on Unix). Use JDK 25 for an IntelliJ 262 SDK; see the [local SDK setup](../README.md#diagnostics-and-development). Copy the resulting versioned ZIP from `target/` here and regenerate the checksum when preparing a new distribution. Maven caches, verifier reports, and other build outputs remain ignored.

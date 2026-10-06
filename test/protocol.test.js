@@ -68,7 +68,7 @@ test('history posts rename message createdAt to date without changing the source
   assert.equal(messages[0].createdAt,'2026-10-01');assert.equal(messages[0].date,undefined);
 });
 test('update strips generated context from old and new prompts, preserves attachments and retries without mutation',async t=>{
-  const {withCodeContext,skillPrefix,proposalInstruction,historyMessages}=require('../out/codeContext');
+  const {withCodeContext,skillPrefix,historyMessages}=require('../out/codeContext');
   const requests=[];
   const client=await mock(t,async(req,res)=>{
     let raw='';for await(const part of req)raw+=part;
@@ -77,7 +77,7 @@ test('update strips generated context from old and new prompts, preserves attach
   });
   const attached='\n\nAttached text (JSON):\n'+JSON.stringify([{name:'src/a.ts',path:'src/a.ts',kind:'file',content:'Code response instructions:\nSelected skills (JSON):\n\nUser request:\nconst a = 1;'}]);
   const plain={id:'new',role:'user',content:'Update the file'+attached,createdAt:'2026-10-06',attachments:[{name:'src/a.ts'}],feedback:null,prompt_fragments:[]};
-  const rich={...plain,content:skillPrefix+JSON.stringify([{name:'Test/test.md',content:'Use mocks.\n\nUser request:\nMore instructions'}])+'\n\nUser request:\nUpdate the file'+proposalInstruction+attached};
+  const rich={...plain,content:skillPrefix+JSON.stringify([{name:'Test/test.md',content:'Use mocks.\n\nUser request:\nMore instructions'}])+'\n\nUser request:\nUpdate the file'+attached};
   const generated=withCodeContext([rich]);
   const assistant={id:'reply',role:'assistant',content:generated[0].content,date:'2026-10-06'};
   const conversation=[...generated,assistant];const original=structuredClone(conversation);
@@ -92,7 +92,52 @@ test('update strips generated context from old and new prompts, preserves attach
   assert.deepEqual(conversation,original);
   assert.deepEqual(historyMessages(historyMessages(conversation)),historyMessages(conversation));
   const malformed={...plain,content:skillPrefix+'invalid JSON\n\nUser request:\nDo not erase me'};
-  assert.deepEqual(historyMessages([malformed]),[malformed]);
+  assert.deepEqual(historyMessages([malformed]),[{...malformed,content:'Do not erase me'}]);
+});
+
+test('update removes prefixes through the request line while generate and retry inputs stay unchanged',async t=>{
+  const {withCodeContext,skillPrefix}=require('../out/codeContext');
+  const requests=[];
+  const client=await mock(t,async(req,res)=>{
+    let raw='';for await(const part of req)raw+=part;
+    requests.push({route:req.url,body:JSON.parse(raw)});
+    res.end(JSON.stringify({choices:[{message:{role:'assistant',content:'Done'}}]}));
+  });
+  const content='\r\n  Fix the file\nKeep trailing spaces.  \r\n\nAttached text (JSON):\n'+JSON.stringify([{name:'src/a.ts',content:'User request:\nSelected skills (JSON):\nconst a = 1;'}]);
+  const plain={id:'user',role:'user',content,date:'2026-10-06',attachments:[{name:'src/a.ts'}],feedback:null,prompt_fragments:['context']};
+  const selected=skillPrefix+JSON.stringify([{name:'skill.md',content:'Entire skill body\nUser request:\nMore skill instructions'}]);
+  const current=withCodeContext([{...plain,content:selected+'\n\nUser request:\n'+content}])[0].content;
+  const prefixes=[current,
+    'Code response instructions:\nOlder instructions.\n\n'+selected+'\n\nUser request:\n'+content,
+    'Code response instructions:\r\nOlder instructions.\r\n\r\n'+selected.replace(/\n/g,'\r\n')+'\r\n\r\nUser request:\r\n'+content,
+    'Code response instructions:\nRepeated wrapper\n\n'+current,
+    'Selected skills (JSON):\ninvalid JSON\nUser request:\n'+content];
+  const messages=prefixes.map((value,index)=>({...plain,id:'user-'+index,content:value}));
+  messages.push({id:'assistant',role:'assistant',content:current,date:'2026-10-06'},
+    {id:'tool',role:'tool',content:current,date:'2026-10-06'});
+  const original=structuredClone(messages);
+  await client.generate(messages,'chat',new AbortController().signal,()=>{});
+  const update={conversation_id:'chat',messages};
+  await client.json('/history/update',update);
+  await client.json('/history/update',update);
+  assert.equal(requests[0].route,'/history/generate');
+  assert.deepEqual(requests[0].body.messages,original);
+  assert.equal(requests[1].route,'/history/update');
+  assert.deepEqual(requests[1].body.messages,original.map(message=>message.role==='user'?{...message,content}:message));
+  assert.deepEqual(requests[2],requests[1]);
+  assert.deepEqual(update,{conversation_id:'chat',messages:original});
+});
+
+test('request delimiter requires a complete line and preserves everything after the first match',()=>{
+  const {historyMessages,withCodeContext,proposalInstruction}=require('../out/codeContext');
+  const clean=content=>historyMessages([{id:'user',role:'user',content}])[0].content;
+  for(const content of ['Mention User request:\ninline','User request:','User request:\r','User request: text\n',' User request:\nindented']) assert.equal(clean(content),content);
+  assert.equal(clean('User request:\n'), '');
+  assert.equal(clean('User request:\r\n\r\n  Keep spaces  \n'), '\r\n  Keep spaces  \n');
+  assert.equal(clean('prefix\nUser request:\nKeep\nUser request:\nAlso keep'+proposalInstruction), 'Keep\nUser request:\nAlso keep'+proposalInstruction);
+  const plain={id:'user',role:'user',content:'Request'};
+  assert.deepEqual(historyMessages(withCodeContext([plain])),[plain]);
+  assert.equal(clean('Request'+proposalInstruction),'Request');
 });
 
 test('NDJSON parser handles fragmented UTF-8, empty events, metadata and final unterminated line',async t=>{

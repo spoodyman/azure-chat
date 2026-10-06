@@ -79,6 +79,37 @@ class AzureClientTest {
             assertEquals("Write tests",string(original.get(0).getAsJsonObject(),"content"));
         }
     }
+    @Test void updatesStripRequestPrefixesWithoutChangingGenerationOrRetryInputs() throws Exception {
+        String content="\r\n  Fix the file\nKeep trailing spaces.  \r\n\nAttached text (JSON):\n"+JSON.toJson(List.of(object("name","src/a.ts","content","User request:\nSelected skills (JSON):\nconst a = 1;")));
+        JsonObject plain=message("user",content);plain.add("attachments",JSON.toJsonTree(List.of(object("name","src/a.ts"))));
+        plain.add("feedback",object("score",1));plain.add("prompt_fragments",JSON.toJsonTree(List.of("context")));
+        JsonArray single=new JsonArray();single.add(plain);
+        JsonArray skills=new JsonArray();skills.add(object("name","skill.md","content","Entire skill body\nUser request:\nMore skill instructions"));
+        String selected=string(withSkills(single,skills).get(0).getAsJsonObject(),"content");
+        String current=string(withCodeContext(withSkills(single,skills),true).get(0).getAsJsonObject(),"content");
+        JsonArray input=new JsonArray();
+        for(String enriched:List.of(current,
+                "Code response instructions:\nOlder instructions.\n\n"+selected,
+                "Code response instructions:\r\nOlder instructions.\r\n\r\n"+selected.substring(0,selected.length()-content.length()).replace("\n","\r\n")+content,
+                "Code response instructions:\nRepeated wrapper\n\n"+current,
+                "Selected skills (JSON):\ninvalid JSON\nUser request:\n"+content)) {
+            JsonObject user=plain.deepCopy();user.addProperty("id","user-"+input.size());user.addProperty("content",enriched);input.add(user);
+        }
+        input.add(message("assistant",current));input.add(message("tool",current));
+        JsonArray original=input.deepCopy(),expected=input.deepCopy();
+        for(JsonElement value:expected) {
+            JsonObject item=value.getAsJsonObject();if(string(item,"role").equals("user")) item.addProperty("content",content);
+        }
+        JsonObject update=object("conversation_id","chat","messages",input),before=update.deepCopy();
+        try(AzureClient client=new AzureClient(base,"private-token","GET",null)) {
+            client.generate(input,"chat",new AzureClient.Cancellation(),(text,metadata)->{});
+            client.json("/history/update",update,"POST");
+            client.json("/history/update",update,"POST");
+        }
+        assertEquals(original,bodies.get(0).getAsJsonArray("messages"));
+        assertEquals(expected,bodies.get(1).getAsJsonArray("messages"));
+        assertEquals(bodies.get(1),bodies.get(2));assertEquals(before,update);assertEquals(original,input);
+    }
     @Test void supportsPostReadAndNewConversationRequests() throws Exception {
         try (AzureClient client = new AzureClient(base, "private-token", "POST", null)) {
             client.read("chat"); assertEquals("chat", string(bodies.getFirst(), "conversation_id"));

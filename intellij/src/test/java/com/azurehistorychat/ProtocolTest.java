@@ -75,7 +75,23 @@ class ProtocolTest {
         JsonArray proposal=original.deepCopy();proposal.get(0).getAsJsonObject().addProperty("content","Update the file"+PROPOSAL_INSTRUCTION+text.substring("Update the file".length()));
         assertEquals(original,historyMessages(proposal));
         String malformed="Use these selected workspace skills for this response. Each entry contains its relative file name and instructions.\n\nSelected skills (JSON):\ninvalid JSON\n\nUser request:\nDo not erase me";
-        JsonArray invalid=new JsonArray();invalid.add(message("user",malformed));assertEquals(invalid,historyMessages(invalid));
+        JsonArray invalid=new JsonArray();invalid.add(message("user",malformed));
+        JsonArray expected=invalid.deepCopy();expected.get(0).getAsJsonObject().addProperty("content","Do not erase me");
+        assertEquals(expected,historyMessages(invalid));
+    }
+    @Test void requestDelimiterRequiresACompleteLineAndPreservesEverythingAfterTheFirstMatch() {
+        for(String content:List.of("Mention User request:\ninline","User request:","User request:\r","User request: text\n"," User request:\nindented")) {
+            JsonArray input=new JsonArray();input.add(message("user",content));assertEquals(input,historyMessages(input));
+        }
+        for(String newline:List.of("\n","\r\n")) {
+            String remaining="\r\n  Keep spaces  \nUser request:\nAlso keep"+PROPOSAL_INSTRUCTION;
+            JsonArray input=new JsonArray();input.add(message("user","prefix"+newline+"User request:"+newline+remaining));
+            assertEquals(remaining,string(historyMessages(input).get(0).getAsJsonObject(),"content"));
+        }
+        JsonArray empty=new JsonArray();empty.add(message("user","User request:\n"));
+        assertEquals("",string(historyMessages(empty).get(0).getAsJsonObject(),"content"));
+        JsonArray plain=new JsonArray();plain.add(message("user","Request"));
+        assertEquals(plain,historyMessages(withCodeContext(plain,true)));
     }
     @Test void countsUtf8AndValidatesUsage() {
         assertEquals(2, estimate("😀é"));

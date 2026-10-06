@@ -336,6 +336,43 @@ test('skill prompts generate and persist through an HTTP history endpoint that r
   assert.ok(!requests[1].messages.at(-1).content.includes('Use a fake service'));
 });
 
+test('chat filters only at the update boundary and retries preserve text after the first delimiter',async t=>{
+  const http=require('node:http');
+  const {AzureClient}=require('../out/protocol');
+  const fixture=await skillWorkspace(t);await fixture.write('skills/test.md','Full skill body.');
+  const chat=createChat({},undefined,undefined,fixture.workspace);
+  await chat.refreshSkills();await chat.selectSkills([chat.skills[0].id]);
+  const text='Write tests\r\nUser request:\r\nKeep this literal line.  \n';
+  const requests=[],saves=[];
+  const server=http.createServer(async(req,res)=>{
+    let raw='';for await(const chunk of req)raw+=chunk;
+    const body=raw?JSON.parse(raw):undefined;
+    res.setHeader('Content-Type','application/json');
+    if(req.url==='/history/generate'){
+      requests.push(body);
+      res.end(JSON.stringify({id:'answer',history_metadata:{conversation_id:'chat'},choices:[{message:{role:'assistant',content:'Done'}}]}));
+    }else if(req.url==='/history/update'){
+      saves.push(body);
+      if(saves.length===1){res.statusCode=500;res.end('{"error":"Save failed"}');}
+      else res.end('{"success":true}');
+    }else res.end('[]');
+  });
+  await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));
+  t.after(()=>new Promise(resolve=>server.close(resolve)));
+  chat.client=async()=>new AzureClient(`http://127.0.0.1:${server.address().port}`,'test-token');
+  await chat.send(text);
+  assert.ok(requests[0].messages[0].content.includes('Full skill body.'));
+  assert.ok(requests[0].messages[0].content.endsWith(text));
+  assert.equal(chat.messages[0].content,text);
+  const pending=structuredClone(chat.pendingSave);
+  assert.equal(pending[0].content,text);
+  await chat.save();
+  assert.deepEqual(saves[1],saves[0]);
+  assert.equal(saves[0].messages[0].content,'Keep this literal line.  \n');
+  assert.equal(chat.messages[0].content,text);
+  assert.equal(chat.pendingSave,undefined);
+});
+
 test('skills enforce the combined attachment budget and reject binary text before generation',async t=>{
   const fixture=await skillWorkspace(t);const file=await fixture.write('skills/skill.md','x'.repeat(20));
   const chat=createChat({},undefined,undefined,{...fixture.workspace,getConfiguration:()=>({get:(key,fallback)=>key==='maxAttachmentBytes'?32:fallback})});

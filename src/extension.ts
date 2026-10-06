@@ -4,7 +4,7 @@ import {realpath} from 'node:fs/promises';
 import * as path from 'node:path';
 import {AzureClient, Message, Conversation, parseChanges, contextTokens, estimateTokens, TokenUsage} from './protocol';
 import {Skill, SkillContext, discoverSkills, readSkills, skillPath, withSkills} from './skills';
-import {displayPrompt, historyMessages, proposalInstruction, withCodeContext} from './codeContext';
+import {displayPrompt, proposalInstruction, withCodeContext} from './codeContext';
 
 async function validateTarget(root: vscode.Uri, target: vscode.Uri) {
   const realRoot = await realpath(root.fsPath);
@@ -274,7 +274,6 @@ class Chat implements vscode.WebviewViewProvider {
     const content = this.compose(text);
     this.messages.push({id:randomUUID(),role:'user',content,date:new Date().toISOString()}); this.attachments = this.attachments.filter(a=>a.uri);
     const generationMessages = withCodeContext(withSkills(this.messages,selectedSkills));
-    this.messages = historyMessages(this.messages);
     this.busy = true; this.controller = new AbortController(); this.status = 'Generating…';
     this.draft = '';
     void this.view?.webview.postMessage({type:'sent'});
@@ -287,7 +286,7 @@ class Chat implements vscode.WebviewViewProvider {
       catch { void vscode.window.showWarningMessage('Token usage could not be persisted.'); }
       if (!this.conversationId) throw new Error('Reply received without a conversation ID; cannot save history.');
       this.messages.splice(this.messages.length - 1, 0, ...response.tools);
-      this.pendingSave = historyMessages(this.messages);
+      this.pendingSave = this.messages.map(message=>({...message}));
       await this.save();
       try { await this.list(); } catch { this.status = 'Reply saved. History refresh failed; use Refresh.'; }
     } catch (error) {

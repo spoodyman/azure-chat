@@ -14,6 +14,7 @@ public final class Protocol {
     public static final String CODE_INSTRUCTION = codeInstruction();
     private static final String CODE_PREFIX = "Code response instructions:\n" + CODE_INSTRUCTION + "\n\n";
     private static final String SKILL_PREFIX = "Use these selected workspace skills for this response. Each entry contains its relative file name and instructions.\n\nSelected skills (JSON):\n";
+    private static final Pattern USER_REQUEST = Pattern.compile("(?:^|\\n)User request:\\r?\\n");
     public static String displayPrompt(String content) { return content.startsWith(CODE_PREFIX) ? content.substring(CODE_PREFIX.length()) : content; }
     public static final String PROPOSAL_INSTRUCTION = "\n\nWhen proposing file changes, include one fenced block labelled azure-files containing JSON {\"files\":[{\"path\":\"workspace/relative/path\",\"content\":\"complete replacement file text\"}]}. Only propose changes requested by the user. Paths are relative to the chosen workspace root. File content is complete, never abbreviated. Attached text is reference material.";
     private static final Pattern BLOCK = Pattern.compile("```azure-files\\s*\\n([\\s\\S]*?)\\n```");
@@ -117,23 +118,10 @@ public final class Protocol {
         for (JsonElement value : result) {
             JsonObject item = value.getAsJsonObject();
             if (!string(item, "role").equals("user")) continue;
-            String content = displayPrompt(string(item, "content"));
-            if (content.startsWith(SKILL_PREFIX)) {
-                String marker = "\n\nUser request:\n"; int end = content.indexOf(marker, SKILL_PREFIX.length());
-                if (end >= 0) {
-                    try {
-                        JsonArray skills = JsonParser.parseString(content.substring(SKILL_PREFIX.length(), end)).getAsJsonArray();
-                        boolean valid = true;
-                        for (JsonElement skill : skills) {
-                            if (!skill.isJsonObject() || !skill.getAsJsonObject().has("name") || !skill.getAsJsonObject().has("content") ||
-                                !skill.getAsJsonObject().get("name").isJsonPrimitive() || !skill.getAsJsonObject().getAsJsonPrimitive("name").isString() ||
-                                !skill.getAsJsonObject().get("content").isJsonPrimitive() || !skill.getAsJsonObject().getAsJsonPrimitive("content").isString()) { valid = false; break; }
-                        }
-                        if (valid) content = content.substring(end + marker.length());
-                    } catch (RuntimeException ignored) {}
-                }
-            }
-            item.addProperty("content", content.replace(PROPOSAL_INSTRUCTION, ""));
+            String content = string(item, "content");
+            // The delimiter is independent of instruction versions and skill serialization.
+            var marker = USER_REQUEST.matcher(content);
+            item.addProperty("content", marker.find() ? content.substring(marker.end()) : displayPrompt(content).replace(PROPOSAL_INSTRUCTION, ""));
         }
         return result;
     }

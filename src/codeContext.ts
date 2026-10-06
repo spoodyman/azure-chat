@@ -12,17 +12,12 @@ export function displayPrompt(content: string): string {
 export function historyMessages(messages: Message[]): Message[] {
   return messages.map(message => {
     if (message.role !== 'user') return {...message};
-    let content = displayPrompt(message.content);
-    if (content.startsWith(skillPrefix)) {
-      const marker = '\n\nUser request:\n', end = content.indexOf(marker,skillPrefix.length);
-      if (end >= 0) {
-        try {
-          const skills = JSON.parse(content.slice(skillPrefix.length,end));
-          if (Array.isArray(skills) && skills.every(skill => skill && typeof skill.name === 'string' && typeof skill.content === 'string')) content = content.slice(end + marker.length);
-        } catch {}
-      }
-    }
-    return {...message,content:content.replace(proposalInstruction,'')};
+    // The delimiter is independent of instruction versions and skill serialization.
+    const marker = /(?:^|\n)User request:\r?\n/.exec(message.content);
+    const content = marker
+      ? message.content.slice(marker.index + marker[0].length)
+      : displayPrompt(message.content).replace(proposalInstruction,'');
+    return {...message,content};
   });
 }
 

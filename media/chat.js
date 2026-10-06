@@ -65,7 +65,10 @@ window.addEventListener('message',event=>{
     pending.button.textContent=event.data.error?'Copy failed':'Copied!';
     setTimeout(()=>{pending.button.textContent=pending.label;},2000);return;
   }
-  if(event.data.type==='sent'){element('prompt').value='';vscode.setState({...vscode.getState(),draft:''});return;}
+  if(event.data.type==='sent'){
+    if(event.data.text===undefined || element('prompt').value===event.data.text){element('prompt').value='';vscode.setState({...vscode.getState(),draft:''});}
+    return;
+  }
   if(event.data.type!=='state')return;
   state=event.data;
   if(state.tokens){

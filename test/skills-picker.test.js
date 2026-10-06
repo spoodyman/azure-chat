@@ -91,3 +91,13 @@ test('token usage shows separate skills, chatbox and pinned file estimates',()=>
   assert.equal(element('overhead-tokens').textContent,'Message overhead and instructions: ~5 tokens');
   assert.equal(element('request-tokens').textContent,'Next request context: ~105 tokens');
 });
+
+test('chatbox text survives busy and failed requests and clears only the successfully saved draft',()=>{
+  const {element,update,saved,receive}=picker({draft:'Original question',skillsOpen:false});
+  update({busy:true,generating:true});assert.equal(element('prompt').value,'Original question');assert.equal(saved().draft,'Original question');
+  update({busy:false,generating:false,status:'Request failed'});assert.equal(element('prompt').value,'Original question');assert.equal(saved().draft,'Original question');
+  element('prompt').value='Next question';element('prompt').oninput();
+  receive({data:{type:'sent',text:'Original question'}});assert.equal(element('prompt').value,'Next question');assert.equal(saved().draft,'Next question');
+  receive({data:{type:'sent',text:'Next question'}});assert.equal(element('prompt').value,'');assert.equal(saved().draft,'');
+  assert.equal(saved().skillsOpen,false);
+});

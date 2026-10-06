@@ -156,6 +156,76 @@ test('successful history saves clear every attachment and skill; failed saves pr
   assert.deepEqual(chat.attachments,[]);assert.deepEqual(chat.selectedSkillIds,[]);assert.deepEqual(chat.skillContents,[]);assert.equal(chat.pendingSave,undefined);
 });
 
+for(const scenario of ['new-empty','new-partial','existing-partial','new-cancelled'])test(`failed generation keeps the draft and rolls back the local turn (${scenario})`,async t=>{
+  const fixture=await skillWorkspace(t);await fixture.write('skills/test.md','Keep selected instructions');
+  const chat=createChat({},undefined,undefined,fixture.workspace);await chat.refreshSkills();await chat.selectSkills([chat.skills[0].id]);
+  const posted=[];chat.view={webview:{postMessage:message=>posted.push(structuredClone(message))}};
+  const previous=scenario.startsWith('existing')?[{id:'old',role:'assistant',content:'Previous reply',date:'2026-10-06'}]:[];
+  chat.messages=structuredClone(previous);chat.conversationId=scenario.startsWith('existing')?'existing':undefined;
+  chat.attachments=[{id:'file',name:'example.ts',content:'attached text'}];
+  const text='  Original question\nKeep these lines and spaces.  ';
+  let updates=0;
+  chat.client=async()=>({
+    read:async()=>structuredClone(previous),
+    generate:async(_messages,_id,_signal,onUpdate)=>{
+      assert.equal(chat.draft,text);assert.equal(posted.filter(message=>message.type==='sent').length,0);
+      onUpdate(scenario.endsWith('empty')?'':'Partial reply',{conversation_id:chat.conversationId||'failed-chat'});
+      if(scenario.endsWith('cancelled')){chat.controller.abort();throw new DOMException('Stopped','AbortError');}
+      throw new Error('Azure request failed (500)');
+    },
+    json:async()=>{updates++;return {};}
+  });
+  await chat.send(text);
+  assert.equal(chat.draft,text);assert.deepEqual(chat.messages,previous);
+  assert.equal(chat.conversationId,scenario.startsWith('existing')?'existing':undefined);
+  assert.equal(chat.needsReopen,scenario.startsWith('existing'));assert.equal(chat.pendingSave,undefined);
+  assert.equal(chat.attachments.length,1);assert.equal(chat.selectedSkillIds.length,1);
+  assert.equal(updates,0);assert.equal(posted.filter(message=>message.type==='sent').length,0);
+  assert.match(chat.status,/Your draft is kept/);
+  assert.deepEqual(posted.at(-1).messages,previous);assert.equal(posted.at(-1).generating,false);
+});
+
+test('history read failures preserve the draft without adding a local turn',async()=>{
+  const chat=createChat();chat.conversationId='existing';chat.messages=[{id:'old',role:'assistant',content:'Prior reply'}];
+  const before=structuredClone(chat.messages);let generated=false;
+  chat.client=async()=>({read:async()=>{throw new Error('Read failed');},generate:async()=>{generated=true;}});
+  await assert.rejects(chat.send('Original question'),/Read failed/);
+  assert.equal(chat.draft,'Original question');assert.deepEqual(chat.messages,before);assert.equal(generated,false);
+});
+
+test('failed updates keep draft and reply internally, and retry commits the turn using the returned conversation ID',async()=>{
+  const chat=createChat(),posted=[],updates=[];chat.view={webview:{postMessage:message=>posted.push(structuredClone(message))}};
+  let fail=true;
+  chat.client=async()=>({
+    generate:async(_messages,_id,_signal,onUpdate)=>{
+      assert.equal(chat.draft,'Original question');assert.ok(!posted.some(message=>message.type==='sent'));
+      onUpdate('Done',{conversation_id:'created-chat'});
+      return {message:{id:'reply',role:'assistant',content:'Done',date:'2026-10-06'},tools:[],metadata:{conversation_id:'created-chat'}};
+    },
+    json:async(route,body)=>{if(route.startsWith('/history/list'))return [];updates.push(structuredClone(body));if(fail)throw new Error('Save failed');return {};}
+  });
+  await chat.send('Original question');
+  assert.equal(chat.draft,'Original question');assert.deepEqual(chat.messages,[]);assert.equal(chat.conversationId,undefined);
+  assert.equal(chat.pendingSave.at(-1).content,'Done');assert.equal(chat.pendingConversationId,'created-chat');
+  assert.ok(!posted.some(message=>message.type==='sent'));assert.match(chat.status,/Retry saving reply/);
+  fail=false;await chat.save();
+  assert.deepEqual(updates[1],updates[0]);assert.equal(updates[1].conversation_id,'created-chat');
+  assert.equal(chat.conversationId,'created-chat');assert.equal(chat.messages[0].content,'Original question');assert.equal(chat.messages.at(-1).content,'Done');
+  assert.equal(chat.draft,'');assert.equal(chat.pendingSave,undefined);
+  assert.deepEqual(posted.filter(message=>message.type==='sent'),[{type:'sent',text:'Original question'}]);
+});
+
+test('successful sending preserves a newer draft typed before the save completes',async()=>{
+  const chat=createChat(),posted=[];chat.view={webview:{postMessage:message=>posted.push(structuredClone(message))}};
+  chat.client=async()=>({
+    generate:async(_messages,_id,_signal,onUpdate)=>{onUpdate('Done',{conversation_id:'chat'});return {message:{id:'reply',role:'assistant',content:'Done'},tools:[],metadata:{}};},
+    json:async route=>{if(route==='/history/update')chat.draft='Next question';return [];}
+  });
+  await chat.send('Original question');
+  assert.equal(chat.draft,'Next question');assert.equal(chat.messages[0].content,'Original question');
+  assert.deepEqual(posted.filter(message=>message.type==='sent'),[{type:'sent',text:'Original question'}]);
+});
+
 test('generation includes formatting while updates preserve only user text and attachments',async()=>{
   const generated=[],saved=[];const chat=createChat();
   chat.attachments=[{id:'selection',name:'src/example.ts:3-5',content:'selected code'}];
@@ -421,7 +491,7 @@ test('chat filters only at the update boundary and retries preserve text after t
   await chat.send(text);
   assert.ok(requests[0].messages[0].content.includes('Full skill body.'));
   assert.ok(requests[0].messages[0].content.endsWith(text));
-  assert.equal(chat.messages[0].content,text);
+  assert.deepEqual(chat.messages,[]);
   const pending=structuredClone(chat.pendingSave);
   assert.equal(pending[0].content,text);
   await chat.save();

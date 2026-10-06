@@ -38,6 +38,7 @@ public final class ChatService implements Disposable {
     private volatile boolean operation, generating, disposed;
     private volatile AzureClient.Cancellation cancellation;
     private JsonArray messages = new JsonArray(), conversations = new JsonArray(), pendingSave;
+    private String pendingConversationId, pendingDraft;
     private String conversationId, status = "", draft = "";
     private boolean needsReopen;
     private final List<Attachment> attachments = new ArrayList<>();
@@ -200,14 +201,16 @@ public final class ChatService implements Disposable {
         requireSaved();
         if (needsReopen) throw new IllegalStateException("Reopen the chat from history or start a new chat before sending.");
         if (text.isBlank()) return;
+        draft = text;
         refreshSkills(); JsonArray attached = attachmentContents();
         long used = 0; for (JsonElement item : attached) used += bytes(string(item.getAsJsonObject(), "content"));
         JsonArray selectedSkills = workspace.skillContents(skills, selected, settings().maxAttachmentBytes - used);
         try (AzureClient client = client()) {
             if (conversationId != null) messages = client.read(conversationId);
+            JsonArray previousMessages = messages.deepCopy(); String previousConversationId = conversationId;
             messages.add(message("user", compose(text, attached)));
             JsonArray input = withCodeContext(withSkills(messages, selectedSkills),true);
-            generating = true; cancellation = new AzureClient.Cancellation(); draft = ""; status = "Generating…"; emit(object("type", "sent"));
+            generating = true; cancellation = new AzureClient.Cancellation(); status = "Generating…";
             JsonObject placeholder = message("assistant", ""); messages.add(placeholder); render();
             long[] lastRender = {0};
             try {
@@ -219,18 +222,23 @@ public final class ChatService implements Disposable {
                 messages.remove(messages.size() - 1); for (JsonElement tool : response.tools()) messages.add(tool); messages.add(response.message());
                 ChatSettings.getInstance().record(input, response.message(), response.usage());
                 if (conversationId == null) throw new IllegalStateException("Reply received without a conversation ID; cannot save history.");
-                pendingSave = messages.deepCopy(); save();
+                pendingSave = messages.deepCopy(); pendingConversationId = conversationId; pendingDraft = text; save();
                 try { list(); status = "Reply saved to chat history."; } catch (Exception error) { status = "Reply saved. History refresh failed; use Refresh."; }
             } catch (Exception error) {
-                needsReopen = pendingSave == null;
-                if (string(placeholder, "content").isEmpty() && messages.size() > 0 && messages.get(messages.size() - 1) == placeholder) messages.remove(messages.size() - 1);
-                status = cancellation.isCancelled() ? "Stopped. A partial reply was not saved; refresh and reopen the chat to reconcile server history." : errorMessage(error) + (pendingSave != null ? " Use Retry saving reply." : " Refresh and reopen the chat before retrying; the backend may already have saved your message.");
+                messages = previousMessages; conversationId = previousConversationId;
+                needsReopen = pendingSave == null && previousConversationId != null;
+                String detail = cancellation.isCancelled() && pendingSave == null ? "Stopped." : errorMessage(error);
+                status = detail + " Your draft is kept. " + (pendingSave != null ? "Use Retry saving reply." : previousConversationId != null ? "Reopen the chat before retrying; Azure may already have saved your message." : "Azure may already have saved your message; check history before retrying.");
             } finally { generating = false; cancellation = null; }
         }
     }
     private void save() throws Exception {
-        if (pendingSave == null || conversationId == null) return;
-        try (AzureClient client = client()) { client.json("/history/update", object("conversation_id", conversationId, "messages", pendingSave), "POST"); }
+        String savedConversationId = pendingConversationId == null ? conversationId : pendingConversationId;
+        if (pendingSave == null || savedConversationId == null) return;
+        try (AzureClient client = client()) { client.json("/history/update", object("conversation_id", savedConversationId, "messages", pendingSave), "POST"); }
+        messages = pendingSave.deepCopy(); conversationId = savedConversationId;
+        if (pendingDraft != null) { if (draft.equals(pendingDraft)) draft = ""; emit(object("type", "sent", "text", pendingDraft)); }
+        pendingConversationId = null; pendingDraft = null;
         attachments.clear();selected.clear();
         pendingSave = null; needsReopen = false; status = "Reply saved to chat history.";
     }

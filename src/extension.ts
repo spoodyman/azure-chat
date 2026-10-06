@@ -39,6 +39,8 @@ class Chat implements vscode.WebviewViewProvider {
   skillsRevision = 0;
   usageMonths: Record<string, {input:number; output:number; total:number; estimatedRequests:number; requests:number}>;
   pendingSave?: Message[];
+  pendingConversationId?: string;
+  pendingDraft?: string;
   previews = new Map<string, string>();
   lastEditor = vscode.window.activeTextEditor;
   readonly apiOutput = vscode.window.createOutputChannel('Azure Chat API');
@@ -254,6 +256,7 @@ class Chat implements vscode.WebviewViewProvider {
     if(this.needsReopen) throw new Error('Reopen the chat from history or start a new chat before sending.');
     if (this.pendingSave) throw new Error('Save the previous reply before sending another message.');
     if (!text.trim()) return;
+    this.draft = text;
     await this.refreshSkills();
     if (this.attachments.some(a => a.uri)) {
       if (!vscode.workspace.isTrusted) throw new Error('Trust this workspace before attaching its files.');
@@ -272,12 +275,11 @@ class Chat implements vscode.WebviewViewProvider {
     // Use persisted IDs, dates and metadata rather than the previous local turn.
     // The backend can assign different IDs when it stores user messages.
     if (this.conversationId) this.messages = await client.read(this.conversationId);
+    const previousMessages = [...this.messages], previousConversationId = this.conversationId;
     const content = this.compose(text);
     this.messages.push({id:randomUUID(),role:'user',content,date:new Date().toISOString()});
     const generationMessages = withCodeContext(withSkills(this.messages,selectedSkills));
     this.busy = true; this.controller = new AbortController(); this.status = 'Generating…';
-    this.draft = '';
-    void this.view?.webview.postMessage({type:'sent'});
     const placeholder: Message = {id:randomUUID(),role:'assistant',content:''}; this.messages.push(placeholder); this.render();
     try {
       const response = await client.generate(generationMessages,this.conversationId,AbortSignal.any([this.controller.signal,AbortSignal.timeout(180000)]),(text,metadata)=>{placeholder.content=text; if (metadata.conversation_id) this.conversationId=metadata.conversation_id; this.render();});
@@ -288,17 +290,26 @@ class Chat implements vscode.WebviewViewProvider {
       if (!this.conversationId) throw new Error('Reply received without a conversation ID; cannot save history.');
       this.messages.splice(this.messages.length - 1, 0, ...response.tools);
       this.pendingSave = this.messages.map(message=>({...message}));
+      this.pendingConversationId = this.conversationId; this.pendingDraft = text;
       await this.save();
       try { await this.list(); } catch { this.status = 'Reply saved. History refresh failed; use Refresh.'; }
     } catch (error) {
-      this.needsReopen=!this.pendingSave;
-      if (!placeholder.content) this.messages.pop();
-      this.status = this.controller.signal.aborted ? 'Stopped. A partial reply was not saved; refresh and reopen the chat to reconcile server history.' : `${error instanceof Error ? error.message : error} ${this.pendingSave ? 'Use Retry saving reply.' : 'Refresh and reopen the chat before retrying; the backend may already have saved your message.'}`;
+      this.messages = previousMessages; this.conversationId = previousConversationId;
+      this.needsReopen = !this.pendingSave && !!previousConversationId;
+      const detail = this.controller.signal.aborted && !this.pendingSave ? 'Stopped.' : error instanceof Error ? error.message : String(error);
+      this.status = `${detail} Your draft is kept. ${this.pendingSave ? 'Use Retry saving reply.' : previousConversationId ? 'Reopen the chat before retrying; Azure may already have saved your message.' : 'Azure may already have saved your message; check history before retrying.'}`;
     } finally {this.busy=false;this.controller=undefined;this.render();}
   }
   async save() {
-    if (!this.pendingSave || !this.conversationId) return;
-    await (await this.client()).json('/history/update',{conversation_id:this.conversationId,messages:this.pendingSave});
+    const conversationId=this.pendingConversationId ?? this.conversationId;
+    if (!this.pendingSave || !conversationId) return;
+    await (await this.client()).json('/history/update',{conversation_id:conversationId,messages:this.pendingSave});
+    this.messages=this.pendingSave.map(message=>({...message}));this.conversationId=conversationId;
+    if(this.pendingDraft!==undefined) {
+      if(this.draft===this.pendingDraft)this.draft='';
+      void this.view?.webview.postMessage({type:'sent',text:this.pendingDraft});
+    }
+    this.pendingConversationId=undefined;this.pendingDraft=undefined;
     this.attachments=[];this.selectedSkillIds=[];this.skillContents=[];this.skillsRevision++;
     this.pendingSave=undefined;this.needsReopen=false;this.status='Reply saved to chat history.';
   }

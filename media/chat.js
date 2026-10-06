@@ -84,8 +84,8 @@ window.addEventListener('message',event=>{
     element('usage-month').replaceChildren(...[...new Set([state.tokens.month,...Object.keys(state.tokens.months)])].sort().reverse().map(month=>new Option(month,month)));
     element('usage-month').value=selected;renderMonthlyUsage();
   }
-  const messages=element('messages'),page=document.scrollingElement || messages,previousTop=page.scrollTop;
-  const nearBottom=page.scrollHeight-page.scrollTop-page.clientHeight<80;
+  const messages=element('messages'),previousTop=messages.scrollTop;
+  const nearBottom=messages.scrollHeight-messages.scrollTop-messages.clientHeight<80;
   for(const card of messages.querySelectorAll?.('.code-accordion') || []) {
     const scroll=card.querySelector('.code-scroll');
     codeViews.set(card.dataset.codeKey,{open:card.open,top:scroll.scrollTop,left:scroll.scrollLeft});
@@ -126,7 +126,6 @@ window.addEventListener('message',event=>{
     });
     if(message.role==='assistant' && message.content.includes('```azure-files')){const button=document.createElement('button');button.textContent='Review file changes';button.disabled=state.busy;button.onclick=()=>send('changes',{index});article.append(button);}
   });
-  page.scrollTop=nearBottom ? page.scrollHeight : previousTop;
   element('chats').replaceChildren(new Option('New chat',''),...state.conversations.map(c=>new Option(c.title,c.id)));
   if(state.conversationId && !state.conversations.some(c=>c.id===state.conversationId))element('chats').add(new Option('Current chat',state.conversationId));
   element('chats').value=state.conversationId || '';
@@ -138,6 +137,7 @@ window.addEventListener('message',event=>{
   if(state.needsReopen)element('send').disabled=true;
   element('delete').disabled=state.busy || state.pendingSave || !state.conversationId;
   element('stop').hidden=!state.generating;element('retry').hidden=!state.pendingSave;element('retry').disabled=state.busy;
+  messages.scrollTop=nearBottom ? messages.scrollHeight : previousTop;
 });
 send('ready');
 send('draft',{text:element('prompt').value});

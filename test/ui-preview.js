@@ -22,19 +22,28 @@ const check=`
     if(cards[2].querySelector('.code-path').textContent!=='code')throw Error('Unnamed code label');
     cards[0].open=true;
     if(cards[0].querySelector('.code-scroll').clientHeight<cards[0].querySelector('pre').clientHeight)throw Error('Code is vertically constrained');
+    const messages=document.getElementById('messages'),prompt=document.getElementById('prompt');
+    if(messages.scrollHeight<=messages.clientHeight || getComputedStyle(messages).overflowY!=='auto')throw Error('Chat messages have no independent scrollbar');
+    if(document.scrollingElement.scrollHeight>innerHeight+1 || prompt.getBoundingClientRect().bottom>innerHeight)throw Error('Chat messages push the composer outside the viewport');
+    const promptTop=prompt.getBoundingClientRect().top;
+    messages.scrollTop=90;const previousTop=messages.scrollTop;
+    if(previousTop<=0 || prompt.getBoundingClientRect().top!==promptTop)throw Error('Scrolling the history moves the composer');
     cards[0].querySelector('.code-scroll').scrollLeft=5;
     cards[0].querySelector('.code-actions button:last-child').click();
     if(events.at(-1).type!=='open-code' || events.at(-1).path!=='src/example.ts')throw Error('Open in editor bridge failed');
     update();cards=document.querySelectorAll('.code-accordion');
     if(!cards[0].open)throw Error('Expanded state lost on render');
+    if(messages.scrollTop!==previousTop)throw Error('Reading position lost on render');
     cards[0].open=false;update();cards=document.querySelectorAll('.code-accordion');
     if(cards[0].open)throw Error('Collapsed state lost on render');
     previewState.busy=true;previewState.generating=true;update();
     if([...document.querySelectorAll('.code-accordion')].some(card=>!card.open))throw Error('Streaming code did not expand');
+    messages.scrollTop=messages.scrollHeight;
     previewState.messages[1].content+=${JSON.stringify('\n\nMore streamed content.\n\n```javascript\nconsole.log("streaming");\n```')};
     previewState.conversationId='streamed-conversation';update();
     cards=document.querySelectorAll('.code-accordion');
     if(cards.length!==4 || [...cards].some(card=>!card.open))throw Error('New streamed code did not expand after conversation ID changed');
+    if(messages.scrollHeight-messages.scrollTop-messages.clientHeight>1)throw Error('Streaming did not follow the history scrollbar');
     previewState.generating=false;update();
     if([...document.querySelectorAll('.code-accordion')].some(card=>card.open))throw Error('Code did not collapse when generation finished');
     previewState.busy=false;update();
@@ -43,7 +52,7 @@ const check=`
     cards=document.querySelectorAll('.code-accordion');
     if(!cards[0].open || cards[1].open)throw Error('Manual expansion after generation did not persist');
     cards[0].open=true;cards[2].open=true;
-    const messages=document.getElementById('messages');document.scrollingElement.scrollTop=Math.max(0,messages.querySelector('article.assistant').offsetTop-30);
+    messages.scrollTop=messages.querySelector('article.assistant').offsetTop-messages.offsetTop;
     document.body.dataset.uiTest='passed';
   } catch(error) {document.body.dataset.uiTest='failed';document.body.dataset.uiError=error.message;}
 `;

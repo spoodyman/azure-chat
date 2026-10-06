@@ -4,8 +4,8 @@ The IntelliJ counterpart of the VS Code extension in this repository. It uses th
 
 ## Install and connect
 
-1. Build with `./gradlew test buildPlugin` (Windows: `.\gradlew.bat test buildPlugin`) using JDK 21 or newer.
-2. In IntelliJ, open **Settings → Plugins → ⚙ → Install Plugin from Disk** and choose `build/distributions/azure-history-chat-intellij-0.1.7.zip`, then restart when prompted.
+1. Build with `./mvnw clean verify` (Windows: `.\mvnw.cmd clean verify`) using JDK 21 or newer. If Maven is installed, `mvn clean verify` works too.
+2. In IntelliJ, open **Settings → Plugins → ⚙ → Install Plugin from Disk** and choose `target/azure-history-chat-intellij-0.1.7.zip`, then restart when prompted.
 3. Open **View → Tool Windows → Azure Chat** and click **Connection**.
 4. Enter the deployed Microsoft Azure OpenAI Chat sample application URL and a user bearer token accepted by its authentication layer. This is the application URL, not the Azure OpenAI resource endpoint. Tokens are stored in IntelliJ Password Safe, separately for each application URL, and are never passed to the embedded UI. Leave the token field blank to retain the token for that URL.
 5. Select **POST** history reads for the Microsoft sample's `POST /history/read` endpoint, or **GET** for backends exposing `/history/read/{id}`.
@@ -31,16 +31,24 @@ Use **Azure Chat: Show API Log** in Find Action to enable logging and show the *
 
 ```powershell
 cd intellij
-.\gradlew.bat test buildPlugin
-.\gradlew.bat runIde
-.\gradlew.bat verifyPluginStructure
-.\gradlew.bat verifyPlugin
+.\mvnw.cmd clean verify
+.\mvnw.cmd test
+
+# Check plugin structure and binary compatibility against an installed IDE:
+.\mvnw.cmd -Pverify-plugin "-Didea.home=C:\path\to\IntelliJ IDEA 2024.3.6" verify
+
+# Run a separate development IDE with isolated configuration, caches and plugins:
+.\mvnw.cmd -Prun-ide "-Didea.home=C:\path\to\IntelliJ IDEA 2024.3.6" verify
 ```
 
-The Gradle wrapper pins Gradle 9.6.1. The build downloads the IntelliJ 2024.3.6 SDK and packages shared assets from `../media`; build from this repository rather than copying the `intellij` folder alone. Protocol tests use a local mock HTTP server and cover history contracts, fragmented UTF-8 streaming, cancellation, redaction, redirect rejection, usage counts, temporary skills, and proposal path validation. They do not connect to Azure.
+The Maven wrapper pins Maven 3.9.16. `pom.xml` compiles Java 21 against IntelliJ 2024.3.6 platform modules (build 243.26574.91) from JetBrains' Maven repositories. IDE dependencies use `provided` scope, so the installable ZIP contains only this plugin and its application libraries. Maven copies shared assets from `../media`, filters the plugin descriptor version and compatibility range, runs JUnit 5 with Surefire, and creates the plugin ZIP using Assembly. Build from this repository rather than copying the `intellij` folder alone. Open `pom.xml` as a Maven project for IDE development.
+
+`clean verify` runs tests and builds `target/azure-history-chat-intellij-0.1.7.zip`. The optional `verify-plugin` profile downloads the pinned JetBrains Plugin Verifier and checks the ZIP against `idea.home`; reports are saved under `target/plugin-verifier`. Compatibility failures, invalid descriptors, internal API uses, and invalid override-only API uses fail the Maven build. Experimental project-trust API reports remain informational. The `run-ide` profile stages the plugin under `target/sandbox/plugins`, then launches `idea.home` with separate settings, caches, and logs. It does not modify the installed IDE's normal profile. Use a supported IDE with its bundled JetBrains Runtime; on macOS set `idea.home` to `IntelliJ IDEA.app/Contents`. Override `-Didea.executable` if the installation uses a different launcher. Both profiles require an existing IDE installation; ordinary builds download platform module dependencies without downloading a complete IDE.
+
+Protocol tests use a local mock HTTP server and cover history contracts, fragmented UTF-8 streaming, cancellation, redaction, redirect rejection, usage counts, temporary skills, and proposal path validation. They do not connect to Azure. The Maven build does not need IntelliJ's test bootstrap or a separate JUnit 4 dependency.
 
 Verified locally: plugin ZIP creation, descriptor validation, and binary compatibility with IntelliJ IDEA 2024.3.6 (build 243.26574.91). Java tests cover transient response-format instructions in addition to the backend protocol. The symlink test requires permission to create symlinks on Windows. The shared JavaScript suite covers accordion grouping, line counts, streaming, and larger editor previews; `node test/ui-preview.js` from the repository root generates a local browser fixture with checks for expansion/scroll restoration and code preview actions. The verifier reports only the platform's documented experimental project-trust API. Other targeted IDE versions and the full interactive IDE flow have not been tested.
 
-For a manual smoke test, open a trusted project in `runIde`, configure a test backend, reopen history, send a follow-up and verify it persisted, pin an unsaved editor file, attach a selection, select and edit skills, cancel a generation, retry a failed history save, and review a new-file and replacement proposal. Also verify clipboard buttons, collapsed skill picker restoration, and the API console. The backend and interactive IDE flow require this manual check.
+For a manual smoke test, launch the `run-ide` profile, open a trusted project, configure a test backend, reopen history, send a follow-up and verify it persisted, pin an unsaved editor file, attach a selection, select and edit skills, cancel a generation, retry a failed history save, and review a new-file and replacement proposal. Also verify clipboard buttons, collapsed skill picker restoration, and the API console. The backend and interactive IDE flow require this manual check.
 
 The plugin targets builds 243–261. IntelliJ 2026.2 moves JCEF behind an explicit module dependency; support for that platform needs a separate compatibility update and verification.

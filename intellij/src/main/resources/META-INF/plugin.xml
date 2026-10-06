@@ -1,6 +1,8 @@
 <idea-plugin>
     <id>com.azurehistorychat.plugin</id>
     <name>Azure History Chat</name>
+    <version>${project.version}</version>
+    <idea-version since-build="${idea.sinceBuild}" until-build="${idea.untilBuild}"/>
     <vendor url="https://github.com/spoodyman/azure-chat">Azure History Chat</vendor>
     <description><![CDATA[
         Chat with the Microsoft Azure OpenAI Chat sample and Cosmos DB history.

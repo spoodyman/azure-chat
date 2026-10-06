@@ -6,3 +6,5 @@ intellij/.gradle/
 intellij/.intellijPlatform/
 intellij/build/
 intellij/.gradle-user-home/
+intellij/target/
+intellij/.maven-repository/

@@ -1,0 +1,234 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>com.azurehistorychat</groupId>
+    <artifactId>azure-history-chat-intellij</artifactId>
+    <version>0.1.7</version>
+    <name>Azure History Chat</name>
+    <description>Azure chat history, code context, and reviewed file proposals for IntelliJ IDEA.</description>
+
+    <properties>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+        <maven.compiler.release>21</maven.compiler.release>
+        <idea.build>243.26574.91</idea.build>
+        <idea.sinceBuild>243</idea.sinceBuild>
+        <idea.untilBuild>261.*</idea.untilBuild>
+        <plugin.verifier.version>1.410</plugin.verifier.version>
+        <idea.executable>${idea.home}/bin/idea.sh</idea.executable>
+    </properties>
+
+    <repositories>
+        <repository>
+            <id>intellij-releases</id>
+            <url>https://www.jetbrains.com/intellij-repository/releases</url>
+            <snapshots><enabled>false</enabled></snapshots>
+        </repository>
+        <repository>
+            <id>intellij-dependencies</id>
+            <url>https://cache-redirector.jetbrains.com/intellij-dependencies</url>
+            <snapshots><enabled>false</enabled></snapshots>
+        </repository>
+    </repositories>
+
+    <!-- IDE libraries are supplied by IntelliJ at runtime and never enter the plugin ZIP. -->
+    <dependencies>
+        <dependency>
+            <groupId>com.jetbrains.intellij.platform</groupId><artifactId>ide</artifactId>
+            <version>${idea.build}</version><scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.jetbrains.intellij.platform</groupId><artifactId>ide-impl</artifactId>
+            <version>${idea.build}</version><scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.jetbrains.intellij.platform</groupId><artifactId>ui-jcef</artifactId>
+            <version>${idea.build}</version><scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.jetbrains.intellij.platform</groupId><artifactId>execution</artifactId>
+            <version>${idea.build}</version><scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.jetbrains.intellij.platform</groupId><artifactId>diff</artifactId>
+            <version>${idea.build}</version><scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.jetbrains.intellij.platform</groupId><artifactId>credential-store</artifactId>
+            <version>${idea.build}</version><scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.jetbrains.kotlin</groupId><artifactId>kotlin-stdlib</artifactId>
+            <version>2.0.21</version><scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.jetbrains</groupId><artifactId>annotations</artifactId>
+            <version>24.0.0</version><scope>provided</scope>
+        </dependency>
+        <dependency>
+            <groupId>com.google.code.gson</groupId><artifactId>gson</artifactId><version>2.11.0</version>
+        </dependency>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId><artifactId>junit-jupiter</artifactId>
+            <version>5.11.4</version><scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <resources>
+            <resource>
+                <directory>src/main/resources</directory>
+                <excludes><exclude>META-INF/plugin.xml</exclude></excludes>
+            </resource>
+            <resource>
+                <directory>src/main/resources</directory><filtering>true</filtering>
+                <includes><include>META-INF/plugin.xml</include></includes>
+            </resource>
+            <resource>
+                <directory>${project.basedir}/../media</directory><targetPath>web</targetPath>
+                <includes>
+                    <include>chat.js</include><include>chat.css</include><include>render-markdown.js</include>
+                    <include>code-cards.js</include><include>code-instructions.txt</include>
+                    <include>markdown-it*</include><include>highlight*</include><include>icon.svg</include>
+                </includes>
+            </resource>
+        </resources>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId><artifactId>maven-enforcer-plugin</artifactId><version>3.5.0</version>
+                <executions><execution><id>build-requirements</id><goals><goal>enforce</goal></goals>
+                    <configuration><rules><requireJavaVersion><version>[21,)</version></requireJavaVersion>
+                        <requireMavenVersion><version>[3.9.9,)</version></requireMavenVersion></rules></configuration>
+                </execution></executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId><artifactId>maven-clean-plugin</artifactId><version>3.4.1</version>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId><artifactId>maven-resources-plugin</artifactId><version>3.3.1</version>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId><artifactId>maven-compiler-plugin</artifactId><version>3.14.1</version>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId><artifactId>maven-surefire-plugin</artifactId><version>3.5.4</version>
+                <configuration><useModulePath>false</useModulePath></configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId><artifactId>maven-jar-plugin</artifactId><version>3.4.2</version>
+                <configuration><archive><manifest><addDefaultImplementationEntries>true</addDefaultImplementationEntries></manifest></archive></configuration>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId><artifactId>maven-assembly-plugin</artifactId><version>3.7.1</version>
+                <configuration>
+                    <descriptors><descriptor>src/assembly/plugin.xml</descriptor></descriptors>
+                    <appendAssemblyId>false</appendAssemblyId>
+                </configuration>
+                <executions><execution><id>plugin-zip</id><phase>package</phase><goals><goal>single</goal></goals></execution></executions>
+            </plugin>
+        </plugins>
+    </build>
+
+    <profiles>
+        <profile>
+            <id>windows-launcher</id><activation><os><family>Windows</family></os></activation>
+            <properties><idea.executable>${idea.home}/bin/idea64.exe</idea.executable></properties>
+        </profile>
+        <profile>
+            <id>mac-launcher</id><activation><os><family>mac</family></os></activation>
+            <properties><idea.executable>${idea.home}/MacOS/idea</idea.executable></properties>
+        </profile>
+        <profile>
+            <id>verify-plugin</id>
+            <build><plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId><artifactId>maven-enforcer-plugin</artifactId>
+                    <executions><execution><id>verifier-ide-home</id><goals><goal>enforce</goal></goals>
+                        <configuration><rules><requireProperty><property>idea.home</property>
+                            <message>Set -Didea.home to an IntelliJ installation with its bundled JetBrains Runtime (on macOS use the app's Contents folder).</message>
+                        </requireProperty></rules></configuration>
+                    </execution></executions>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId><artifactId>maven-dependency-plugin</artifactId><version>3.8.1</version>
+                    <executions><execution><id>download-verifier</id><phase>pre-integration-test</phase><goals><goal>copy</goal></goals>
+                        <configuration><artifactItems><artifactItem>
+                            <groupId>org.jetbrains.intellij.plugins</groupId><artifactId>verifier-cli</artifactId>
+                            <version>${plugin.verifier.version}</version><classifier>all</classifier><type>jar</type>
+                            <outputDirectory>${project.build.directory}/tools</outputDirectory><destFileName>plugin-verifier.jar</destFileName>
+                        </artifactItem></artifactItems></configuration>
+                    </execution></executions>
+                </plugin>
+                <plugin>
+                    <groupId>org.codehaus.mojo</groupId><artifactId>exec-maven-plugin</artifactId><version>3.5.0</version>
+                    <executions><execution><id>verify-plugin</id><phase>verify</phase><goals><goal>exec</goal></goals>
+                        <configuration><executable>${java.home}/bin/java</executable><arguments>
+                            <argument>-jar</argument><argument>${project.build.directory}/tools/plugin-verifier.jar</argument>
+                            <argument>check-plugin</argument><argument>${project.build.directory}/${project.build.finalName}.zip</argument>
+                            <argument>${idea.home}</argument><argument>-verification-reports-dir</argument>
+                            <argument>${project.build.directory}/plugin-verifier</argument>
+                        </arguments></configuration>
+                    </execution></executions>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId><artifactId>maven-antrun-plugin</artifactId><version>3.1.0</version>
+                    <executions><execution><id>check-verification-reports</id><phase>verify</phase><goals><goal>run</goal></goals>
+                        <configuration><target>
+                            <resourcecount property="verification.verdict.count">
+                                <fileset dir="${project.build.directory}/plugin-verifier" includes="**/verification-verdict.txt"/>
+                            </resourcecount>
+                            <fail message="Plugin verification produced no verdict. Inspect target/plugin-verifier.">
+                                <condition><equals arg1="${verification.verdict.count}" arg2="0"/></condition>
+                            </fail>
+                            <resourcecount property="verification.problem.count">
+                                <fileset dir="${project.build.directory}/plugin-verifier" includes="**/compatibility-problems.txt,**/invalid-plugin.txt,**/internal-api-usages.txt,**/override-only-usages.txt"/>
+                            </resourcecount>
+                            <fail message="Plugin verification found compatibility, invalid descriptor, internal API, or override-only API problems. Inspect target/plugin-verifier.">
+                                <condition><not><equals arg1="${verification.problem.count}" arg2="0"/></not></condition>
+                            </fail>
+                        </target></configuration>
+                    </execution></executions>
+                </plugin>
+            </plugins></build>
+        </profile>
+        <profile>
+            <id>run-ide</id>
+            <build><plugins>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId><artifactId>maven-enforcer-plugin</artifactId>
+                    <executions><execution><id>run-ide-home</id><goals><goal>enforce</goal></goals>
+                        <configuration><rules><requireProperty><property>idea.home</property>
+                            <message>Set -Didea.home to an IntelliJ installation (on macOS use the app's Contents folder).</message>
+                        </requireProperty></rules></configuration>
+                    </execution></executions>
+                </plugin>
+                <plugin>
+                    <groupId>org.apache.maven.plugins</groupId><artifactId>maven-antrun-plugin</artifactId><version>3.1.0</version>
+                    <executions><execution><id>prepare-ide-sandbox</id><phase>pre-integration-test</phase><goals><goal>run</goal></goals>
+                        <configuration><target>
+                            <mkdir dir="${project.build.directory}/sandbox/plugins"/>
+                            <delete dir="${project.build.directory}/sandbox/plugins/${project.artifactId}"/>
+                            <unzip src="${project.build.directory}/${project.build.finalName}.zip" dest="${project.build.directory}/sandbox/plugins"/>
+                            <propertyfile file="${project.build.directory}/sandbox/idea.properties">
+                                <entry key="idea.config.path" value="${project.build.directory}/sandbox/config"/>
+                                <entry key="idea.system.path" value="${project.build.directory}/sandbox/system"/>
+                                <entry key="idea.log.path" value="${project.build.directory}/sandbox/log"/>
+                                <entry key="idea.plugins.path" value="${project.build.directory}/sandbox/plugins"/>
+                            </propertyfile>
+                        </target></configuration>
+                    </execution></executions>
+                </plugin>
+                <plugin>
+                    <groupId>org.codehaus.mojo</groupId><artifactId>exec-maven-plugin</artifactId><version>3.5.0</version>
+                    <executions><execution><id>run-ide</id><phase>integration-test</phase><goals><goal>exec</goal></goals>
+                        <configuration><executable>${idea.executable}</executable>
+                            <environmentVariables><IDEA_PROPERTIES>${project.build.directory}/sandbox/idea.properties</IDEA_PROPERTIES></environmentVariables>
+                        </configuration>
+                    </execution></executions>
+                </plugin>
+            </plugins></build>
+        </profile>
+    </profiles>
+</project>

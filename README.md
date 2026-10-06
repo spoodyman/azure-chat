@@ -2,7 +2,7 @@
 
 A VS Code sidebar that talks to a deployed [Microsoft Azure OpenAI Chat sample](https://github.com/microsoft/sample-app-aoai-chatGPT) with Cosmos DB chat history.
 
-An [IntelliJ IDEA version](intellij/README.md) is also available in `intellij/`, sharing the chat UI and backend contract. Install the [prebuilt plugin ZIP](intellij/dist/azure-history-chat-intellij-0.1.11.zip), or build with `.\mvnw.cmd "-Didea.home=C:\path\to\IntelliJ IDEA" clean verify` from the `intellij` directory. The build uses your local IntelliJ installation instead of JetBrains Maven repositories; see the [build setup](intellij/README.md#diagnostics-and-development) for Java requirements. It targets IntelliJ IDEA 2024.3–2026.2.
+An [IntelliJ IDEA version](intellij/README.md) is also available in `intellij/`, sharing the chat UI and backend contract. Install the [prebuilt plugin ZIP](intellij/dist/azure-history-chat-intellij-0.1.12.zip), or build with `.\mvnw.cmd "-Didea.home=C:\path\to\IntelliJ IDEA" clean verify` from the `intellij` directory. The build uses your local IntelliJ installation instead of JetBrains Maven repositories; see the [build setup](intellij/README.md#diagnostics-and-development) for Java requirements. It targets IntelliJ IDEA 2024.3–2026.2.
 
 ## Install and connect
 

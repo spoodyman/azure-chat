@@ -5,7 +5,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>com.azurehistorychat</groupId>
     <artifactId>azure-history-chat-intellij</artifactId>
-    <version>0.1.11</version>
+    <version>0.1.12</version>
     <name>Azure History Chat</name>
     <description>Azure chat history, code context, and reviewed file proposals for IntelliJ IDEA.</description>
 
@@ -108,7 +108,7 @@
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId><artifactId>maven-surefire-plugin</artifactId><version>3.5.4</version>
-                <configuration><useModulePath>false</useModulePath></configuration>
+                <configuration><useModulePath>false</useModulePath><systemPropertyVariables><idea.home>${idea.home}</idea.home></systemPropertyVariables></configuration>
             </plugin>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId><artifactId>maven-jar-plugin</artifactId><version>3.4.2</version>

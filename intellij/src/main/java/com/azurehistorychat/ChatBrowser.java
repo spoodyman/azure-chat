@@ -22,7 +22,8 @@ import java.util.function.Consumer;
 
 /** No credentials are exposed to Chromium; navigation and remote assets are disabled. */
 final class ChatBrowser implements Disposable {
-    private static final String PAGE = "http://azure-chat.local/index.html";
+    // loadHTML rewrites non-file URLs, which would invalidate navigation and bridge checks.
+    private static final String PAGE = BrowserPage.URL;
     private final JBCefBrowser browser = new JBCefBrowser();
     private final JBCefJSQuery query = JBCefJSQuery.create((JBCefBrowserBase) browser);
     private final ChatService service;

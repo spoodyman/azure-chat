@@ -80,7 +80,8 @@ window.addEventListener('message',event=>{
     element('usage-month').replaceChildren(...[...new Set([state.tokens.month,...Object.keys(state.tokens.months)])].sort().reverse().map(month=>new Option(month,month)));
     element('usage-month').value=selected;renderMonthlyUsage();
   }
-  const messages=element('messages');const nearBottom=messages.scrollHeight-messages.scrollTop-messages.clientHeight<80;
+  const messages=element('messages'),page=document.scrollingElement || messages,previousTop=page.scrollTop;
+  const nearBottom=page.scrollHeight-page.scrollTop-page.clientHeight<80;
   for(const card of messages.querySelectorAll?.('.code-accordion') || []) {
     const scroll=card.querySelector('.code-scroll');
     codeViews.set(card.dataset.codeKey,{open:card.open,top:scroll.scrollTop,left:scroll.scrollLeft});
@@ -110,8 +111,9 @@ window.addEventListener('message',event=>{
     messages.append(article);
     if(reply)reply.groups.forEach(group=>{
       const key=`${state.conversationId || 'new'}:${index}:${group.path || 'code-'+group.slot}`;
-      const card=window.chatCode.createCard(document,group,{key,copyButton,
+      const card=window.chatCode.createCard(document,group,{key,copyButton,busy:state.busy,
         openCode:(block,path)=>send('open-code',{text:block.code,path:path || '',language:block.language}),
+        applyCode:(block,path)=>send('apply-code',{text:block.code,path,kind:block.kind}),
         highlight:(code,language)=>window.hljs.getLanguage(language) ? window.hljs.highlight(code,{language,ignoreIllegals:true}).value : markdown.utils.escapeHtml(code)});
       const saved=codeViews.get(key);if(saved)card.open=saved.open;
       body.querySelector(`[data-code-slot="${group.slot}"]`)?.replaceWith(card);
@@ -119,7 +121,7 @@ window.addEventListener('message',event=>{
     });
     if(message.role==='assistant' && message.content.includes('```azure-files')){const button=document.createElement('button');button.textContent='Review file changes';button.disabled=state.busy;button.onclick=()=>send('changes',{index});article.append(button);}
   });
-  if(nearBottom)messages.scrollTop=messages.scrollHeight;
+  page.scrollTop=nearBottom ? page.scrollHeight : previousTop;
   element('chats').replaceChildren(new Option('New chat',''),...state.conversations.map(c=>new Option(c.title,c.id)));
   if(state.conversationId && !state.conversations.some(c=>c.id===state.conversationId))element('chats').add(new Option('Current chat',state.conversationId));
   element('chats').value=state.conversationId || '';

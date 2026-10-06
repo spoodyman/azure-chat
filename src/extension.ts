@@ -2,7 +2,7 @@ import * as vscode from 'vscode';
 import {randomBytes, randomUUID} from 'node:crypto';
 import {realpath} from 'node:fs/promises';
 import * as path from 'node:path';
-import {AzureClient, Message, Conversation, parseChanges, contextTokens, estimateTokens, TokenUsage} from './protocol';
+import {AzureClient, Message, Conversation, parseChanges, applyDiff, contextTokens, estimateTokens, TokenUsage} from './protocol';
 import {Skill, SkillContext, discoverSkills, readSkills, skillPath, withSkills} from './skills';
 import {displayPrompt, proposalInstruction, withCodeContext} from './codeContext';
 
@@ -101,6 +101,7 @@ class Chat implements vscode.WebviewViewProvider {
         else if (event.type === 'send' && typeof event.text === 'string') await this.send(event.text);
         else if (event.type === 'retry') await this.save();
         else if (event.type === 'changes' && Number.isInteger(event.index)) await this.review(event.index);
+        else if (event.type === 'apply-code' && typeof event.path === 'string' && typeof event.text === 'string') await this.applyCode(event.text,event.path,event.kind);
       } catch (error) { this.status = error instanceof Error ? error.message : String(error); }
       this.operation=false; this.render();
     }, undefined, this.context.subscriptions);
@@ -272,7 +273,7 @@ class Chat implements vscode.WebviewViewProvider {
     // The backend can assign different IDs when it stores user messages.
     if (this.conversationId) this.messages = await client.read(this.conversationId);
     const content = this.compose(text);
-    this.messages.push({id:randomUUID(),role:'user',content,date:new Date().toISOString()}); this.attachments = this.attachments.filter(a=>a.uri);
+    this.messages.push({id:randomUUID(),role:'user',content,date:new Date().toISOString()});
     const generationMessages = withCodeContext(withSkills(this.messages,selectedSkills));
     this.busy = true; this.controller = new AbortController(); this.status = 'Generating…';
     this.draft = '';
@@ -298,13 +299,22 @@ class Chat implements vscode.WebviewViewProvider {
   async save() {
     if (!this.pendingSave || !this.conversationId) return;
     await (await this.client()).json('/history/update',{conversation_id:this.conversationId,messages:this.pendingSave});
+    this.attachments=[];this.selectedSkillIds=[];this.skillContents=[];this.skillsRevision++;
     this.pendingSave=undefined;this.needsReopen=false;this.status='Reply saved to chat history.';
   }
   async openCode(text: string, filePath?: unknown, language?: unknown) {
     if (Buffer.byteLength(text,'utf8')>5000000) throw new Error('Code preview exceeds the 5 MB limit.');
+    if (typeof filePath==='string' && filePath && filePath!=='code' && vscode.workspace.workspaceFolders?.length) {
+      const safe = parseChanges('```azure-files\n'+JSON.stringify({files:[{path:filePath,content:text}]})+'\n```')[0].path;
+      const target = await this.fileTarget(safe); if (!target) return;
+      await validateTarget(target.root,target.uri);
+      const exists = await vscode.workspace.fs.stat(target.uri).then(()=>true,(error: any)=>{if(error instanceof vscode.FileSystemError && error.code==='FileNotFound')return false;throw error;});
+      if (exists) { await vscode.window.showTextDocument(await vscode.workspace.openTextDocument(target.uri),{preview:false}); return; }
+    }
     const extensions: Record<string,string>={typescript:'ts',javascript:'js',python:'py',kotlin:'kt',csharp:'cs',bash:'sh',powershell:'ps1',diff:'diff',patch:'diff'};
     const label=typeof filePath==='string' && filePath ? path.posix.basename(filePath.replace(/\\/g,'/')).replace(/[^a-z0-9._-]/gi,'_')+(['diff','patch'].includes(String(language)) ? '.diff' : '') : 'code.'+(extensions[String(language)] || String(language || 'txt').replace(/[^a-z0-9]/gi,'') || 'txt');
-    const preview=vscode.Uri.parse(`azure-chat-preview:/${randomUUID()}/${encodeURIComponent(label)}`);
+    const previewPath=typeof filePath==='string' && filePath && filePath!=='code' ? filePath.replace(/\\/g,'/').split('/').map(encodeURIComponent).join('/') : encodeURIComponent(label);
+    const preview=vscode.Uri.parse(`azure-chat-preview:/${previewPath}?id=${randomUUID()}`);
     this.previews.set(preview.toString(),text);
     try { const document=await vscode.workspace.openTextDocument(preview); await vscode.window.showTextDocument(document,{preview:false}); }
     catch(error) { this.previews.delete(preview.toString()); throw error; }
@@ -313,28 +323,49 @@ class Chat implements vscode.WebviewViewProvider {
     if (!vscode.workspace.isTrusted) throw new Error('Trust the workspace to apply file changes.');
     const message = this.messages[index]; if (message?.role !== 'assistant') return;
     const changes = parseChanges(message.content); if (!changes.length) throw new Error('No azure-files proposal found in this response.');
+    await this.reviewFiles(changes.map(change=>({...change,kind:'replacement'})));
+  }
+  async applyCode(text: string, filePath: string, kind: unknown) {
+    if (!filePath || filePath==='code') throw new Error('The code block needs a workspace-relative file path.');
+    if (Buffer.byteLength(text,'utf8')>5000000) throw new Error('File proposal exceeds the 5 MB limit.');
+    if (!['diff','replacement','snippet'].includes(String(kind))) throw new Error('Unsupported file proposal.');
+    const change=parseChanges('```azure-files\n'+JSON.stringify({files:[{path:filePath,content:text}]})+'\n```')[0];
+    await this.reviewFiles([{...change,kind:String(kind)}]);
+  }
+  async fileTarget(filePath: string) {
     const roots = vscode.workspace.workspaceFolders; if (!roots?.length) throw new Error('Open a workspace folder first.');
-    const root = roots.length === 1 ? roots[0] : await vscode.window.showWorkspaceFolderPick(); if (!root) return;
+    const named=roots.length>1 ? roots.find(root=>filePath.startsWith(root.name+'/')) : undefined;
+    const root = named ?? (roots.length === 1 ? roots[0] : await vscode.window.showWorkspaceFolderPick()); if (!root) return;
     if (root.uri.scheme !== 'file') throw new Error('File proposals currently require a local workspace folder.');
+    const relative=named ? filePath.slice(named.name.length+1) : filePath;
+    return {root:root.uri,uri:vscode.Uri.joinPath(root.uri,relative)};
+  }
+  async reviewFiles(changes: {path:string;content:string;kind:string}[]) {
+    if (!vscode.workspace.isTrusted) throw new Error('Trust the workspace to apply file changes.');
     for (const change of changes) {
-      const target = vscode.Uri.joinPath(root.uri,change.path);
+      const resolved=await this.fileTarget(change.path);if(!resolved)return;
+      const {root,uri:target}=resolved;
       // Resolve every existing ancestor to prevent symlinks escaping the workspace.
-      await validateTarget(root.uri,target);
+      await validateTarget(root,target);
       let document: vscode.TextDocument | undefined;
       try { document=await vscode.workspace.openTextDocument(target); } catch { try { await vscode.workspace.fs.stat(target); throw new Error('Target exists but cannot be opened as text.'); } catch(error: any) { if (!(error instanceof vscode.FileSystemError && error.code==='FileNotFound')) throw error; } }
       const version=document?.version;
+      if (document && change.kind==='snippet') throw new Error('This file already exists. Use a unified diff or a complete replacement to patch it.');
+      const proposed=change.kind==='diff' ? applyDiff(document?.getText() ?? '',change.content,change.path) : change.content;
       const preview=vscode.Uri.parse(`azure-chat-preview:/${randomUUID()}/${encodeURIComponent(change.path)}`);
       const original=vscode.Uri.parse(`azure-chat-preview:/${randomUUID()}/empty`);
-      this.previews.set(preview.toString(),change.content);this.previews.set(original.toString(),'');
+      this.previews.set(preview.toString(),proposed);this.previews.set(original.toString(),'');
       await vscode.commands.executeCommand('vscode.diff',document ? target : original,preview,`${change.path} — proposed change`);
       const choice = await vscode.window.showInformationMessage(`Apply proposed ${document ? 'replacement' : 'new file'}: ${change.path}?`,{modal:true},'Apply');
       if(choice!=='Apply') continue;
-      await validateTarget(root.uri,target);
+      await validateTarget(root,target);
       if(document && document.version!==version) throw new Error('The file changed during review. Review the proposal again.');
       if(!document) { try {await vscode.workspace.fs.stat(target); throw new Error('The target was created during review. Review again.');} catch(error: any) {if(!(error instanceof vscode.FileSystemError && error.code==='FileNotFound')) throw error;} }
       const edit = new vscode.WorkspaceEdit();
-      if(document) edit.replace(target,new vscode.Range(document.positionAt(0),document.positionAt(document.getText().length)),change.content);
-      else {edit.createFile(target,{overwrite:false});edit.insert(target,new vscode.Position(0,0),change.content);}
+      if(!document) await vscode.workspace.fs.createDirectory(vscode.Uri.file(path.dirname(target.fsPath)));
+      await validateTarget(root,target);
+      if(document) edit.replace(target,new vscode.Range(document.positionAt(0),document.positionAt(document.getText().length)),proposed);
+      else {edit.createFile(target,{overwrite:false});edit.insert(target,new vscode.Position(0,0),proposed);}
       if(!await vscode.workspace.applyEdit(edit)) throw new Error('VS Code could not apply the file change.');
       await vscode.window.showTextDocument(target); this.status='File change applied. Save the editor to write it to disk.';
     }

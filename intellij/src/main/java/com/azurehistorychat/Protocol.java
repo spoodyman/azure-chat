@@ -21,6 +21,53 @@ public final class Protocol {
     private static final Pattern BAD_PART = Pattern.compile("(?i)^(?:con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\\.|$)|^(?:\\.git|\\.codex|\\.agents|\\.aws)$");
     private static final Pattern BAD_CHARACTER = Pattern.compile("[\\x00-\\x1f<>\"|?*:]");
     public record FileChange(String path, String content) {}
+    public record CodeChange(String path, String content, String kind) {}
+    public static String applyDiff(String original, String patch, String path) {
+        String newline=original.contains("\r\n") ? "\r\n" : "\n";
+        List<String> source=new ArrayList<>(Arrays.asList(original.replace("\r\n","\n").replace('\r','\n').split("\n",-1)));
+        if(original.isEmpty() || source.getLast().isEmpty()) source.removeLast();
+        String[] rows=patch.replace("\r\n","\n").replace('\r','\n').split("\n",-1);
+        List<String> output=new ArrayList<>();int cursor=0,hunks=0;boolean headers=false,finalNewline=original.endsWith("\n")||original.endsWith("\r");
+        Pattern hunkPattern=Pattern.compile("^@@ -(\\d+)(?:,(\\d+))? \\+(\\d+)(?:,(\\d+))? @@.*$");
+        for(int i=0;i<rows.length;) {
+            String row=rows[i];
+            if(row.startsWith("--- ")) {
+                if(headers || hunks>0 || i+1>=rows.length || !rows[i+1].startsWith("+++ ")) throw patchMismatch();
+                String oldPath=row.substring(4).split("\t",2)[0],newPath=rows[i+1].substring(4).split("\t",2)[0];
+                if(newPath.equals("/dev/null") || !newPath.replaceFirst("^[ab]/","").replace('\\','/').equals(path) ||
+                    (!oldPath.equals("/dev/null") && !oldPath.replaceFirst("^[ab]/","").replace('\\','/').equals(path)) || (oldPath.equals("/dev/null") && !original.isEmpty())) throw patchMismatch();
+                headers=true;i+=2;continue;
+            }
+            var hunk=hunkPattern.matcher(row);
+            if(!hunk.matches()) {
+                if((hunks==0 && (row.startsWith("diff --git ") || row.startsWith("index ") || row.startsWith("new file mode "))) || (i==rows.length-1 && row.isEmpty())) {i++;continue;}
+                throw patchMismatch();
+            }
+            int oldStart=Integer.parseInt(hunk.group(1)),oldCount=hunk.group(2)==null ? 1 : Integer.parseInt(hunk.group(2));
+            int newStart=Integer.parseInt(hunk.group(3)),newCount=hunk.group(4)==null ? 1 : Integer.parseInt(hunk.group(4));
+            int position=oldCount>0 ? oldStart-1 : oldStart,newPosition=newCount>0 ? newStart-1 : newStart;
+            if(position<cursor || position>source.size() || newPosition!=output.size()+position-cursor) throw patchMismatch();
+            output.addAll(source.subList(cursor,position));cursor=position;i++;
+            int oldUsed=0,newUsed=0;char previous=0;boolean noNewline=false;
+            while(i<rows.length && (oldUsed<oldCount || newUsed<newCount || rows[i].equals("\\ No newline at end of file"))) {
+                String line=rows[i++];
+                if(line.equals("\\ No newline at end of file")) {
+                    if(previous==0 || previous=='m') throw patchMismatch();
+                    if(previous!='-') noNewline=true;previous='m';continue;
+                }
+                if(line.isEmpty()) throw patchMismatch();char sign=line.charAt(0);
+                if(sign!=' ' && sign!='+' && sign!='-') throw patchMismatch();
+                if(sign!='+') {if(cursor>=source.size() || !source.get(cursor++).equals(line.substring(1))) throw patchMismatch();oldUsed++;}
+                if(sign!='-') {output.add(line.substring(1));newUsed++;noNewline=false;}
+                if(oldUsed>oldCount || newUsed>newCount) throw patchMismatch();previous=sign;
+            }
+            if(oldUsed!=oldCount || newUsed!=newCount) throw patchMismatch();
+            if(cursor==source.size()) finalNewline=!noNewline;hunks++;
+        }
+        if(hunks==0) throw patchMismatch();output.addAll(source.subList(cursor,source.size()));
+        return String.join(newline,output)+(!output.isEmpty()&&finalNewline ? newline : "");
+    }
+    private static IllegalArgumentException patchMismatch() {return new IllegalArgumentException("The patch does not match the current file, or is incomplete. Regenerate it against the current file.");}
     public record Usage(long prompt, long completion, long total) {}
     private static String codeInstruction() {
         try (var input = Protocol.class.getResourceAsStream("/web/code-instructions.txt")) {

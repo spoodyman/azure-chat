@@ -21,15 +21,16 @@ const check=`
     if(cards[0].querySelector('.code-added').textContent!=='+2' || cards[0].querySelector('.code-removed').textContent!=='−1')throw Error('Incorrect change counts');
     if(cards[2].querySelector('.code-path').textContent!=='code')throw Error('Unnamed code label');
     cards[0].open=true;
-    cards[0].querySelector('.code-scroll').scrollTop=250;
+    if(cards[0].querySelector('.code-scroll').clientHeight<cards[0].querySelector('pre').clientHeight)throw Error('Code is vertically constrained');
+    cards[0].querySelector('.code-scroll').scrollLeft=5;
     cards[0].querySelector('.code-actions button:last-child').click();
     if(events.at(-1).type!=='open-code' || events.at(-1).path!=='src/example.ts')throw Error('Open in editor bridge failed');
     update();cards=document.querySelectorAll('.code-accordion');
-    if(!cards[0].open || cards[0].querySelector('.code-scroll').scrollTop!==250)throw Error('Expanded/scroll state lost on render');
+    if(!cards[0].open)throw Error('Expanded state lost on render');
     cards[0].open=false;update();cards=document.querySelectorAll('.code-accordion');
     if(cards[0].open)throw Error('Collapsed state lost on render');
     cards[0].open=true;cards[2].open=true;
-    const messages=document.getElementById('messages');messages.scrollTop=messages.querySelector('article.assistant').offsetTop-messages.offsetTop;
+    const messages=document.getElementById('messages');document.scrollingElement.scrollTop=Math.max(0,messages.querySelector('article.assistant').offsetTop-30);
     document.body.dataset.uiTest='passed';
   } catch(error) {document.body.dataset.uiTest='failed';document.body.dataset.uiError=error.message;}
 `;

@@ -7,10 +7,11 @@ const os = require('node:os');
 const {pathToFileURL} = require('node:url');
 
 const uri = fsPath => ({fsPath,scheme:'file',toString:()=>pathToFileURL(fsPath).href});
+class FileSystemError extends Error {constructor(code){super(code);this.code=code;}}
 const workspaceFs = {
   readDirectory:async value=>(await fs.readdir(value.fsPath,{withFileTypes:true})).map(entry=>[entry.name,entry.isSymbolicLink()?64:entry.isDirectory()?2:1]),
   readFile:async value=>fs.readFile(value.fsPath),
-  stat:async value=>fs.stat(value.fsPath),
+  stat:async value=>{try{return await fs.stat(value.fsPath);}catch(error){if(error.code==='ENOENT')throw new FileSystemError('FileNotFound');throw error;}},
   createDirectory:async value=>fs.mkdir(value.fsPath,{recursive:true})
 };
 
@@ -18,13 +19,16 @@ function createChat(windowOverrides={}, writeText=async()=>{}, globalState, work
   let chat;
   const disposable = {dispose() {}};
   const vscode = {
-    Uri: {joinPath: (base,...parts)=>uri(path.join(base.fsPath,...parts)),parse:value=>({toString:()=>value,scheme:value.split(':')[0]})},
+    Uri: {file:uri,joinPath: (base,...parts)=>uri(path.join(base.fsPath,...parts)),parse:value=>({toString:()=>value,scheme:value.split(':')[0]})},
+    FileSystemError,
+    Range: class {constructor(start,end){this.start=start;this.end=end;}},
     FileType: {File:1,Directory:2,SymbolicLink:64},
     Position: class {constructor(line,character){this.line=line;this.character=character;}},
     WorkspaceEdit: class {
       edits=[];
       createFile(uri,options){this.edits.push({type:'create',uri,options});}
       insert(uri,position,content){this.edits.push({type:'insert',uri,position,content});}
+      replace(uri,range,content){this.edits.push({type:'replace',uri,range,content});}
     },
     env: {clipboard: {writeText}},
     window: {
@@ -39,7 +43,7 @@ function createChat(windowOverrides={}, writeText=async()=>{}, globalState, work
       registerTextDocumentContentProvider: () => disposable,
       ...workspaceOverrides
     },
-    commands: {registerCommand: () => disposable}
+    commands: {registerCommand: () => disposable,executeCommand:async()=>{}}
   };
   const originalLoad = Module._load;
   try {
@@ -90,12 +94,66 @@ test('larger code views use read-only preview documents and remain available whi
   chat.busy=true;const text='const value = "<hello>";\n';
   await receive({type:'open-code',text,path:'src/example.ts',language:'typescript'});
   assert.equal(opened[0].scheme,'azure-chat-preview');
-  assert.match(opened[0].toString(),/\/example\.ts$/);
+  assert.match(opened[0].toString(),/\/src\/example\.ts\?id=/);
   assert.equal(chat.previews.get(opened[0].toString()),text);
   assert.deepEqual(shown[0].options,{preview:false});
   await chat.openCode('@@ -1 +1 @@\n-old\n+new\n','src/example.ts','diff');
-  assert.match(opened[1].toString(),/example\.ts\.diff$/);
+  assert.match(opened[1].toString(),/\/src\/example\.ts\?id=/);
   await assert.rejects(chat.openCode('x'.repeat(5000001)),/5 MB/);
+});
+
+test('file cards patch current documents, create titled files, and open real workspace paths',async t=>{
+  const fixture=await skillWorkspace(t),existing=await fixture.write('src/example.ts','before\n');
+  const documents=new Map(),edits=[],shown=[];let choice='Apply',changedDuringReview=false;
+  const document={uri:existing,version:1,text:'before\n',getText(){return this.text;},positionAt:offset=>({line:0,character:offset})};
+  documents.set(existing.fsPath,document);
+  const chat=createChat({
+    showTextDocument:async value=>shown.push(value),
+    showInformationMessage:async()=>{if(changedDuringReview)document.version++;return choice;}
+  },undefined,undefined,{
+    ...fixture.workspace,
+    openTextDocument:async target=>{
+      if(target.scheme!=='file')return {uri:target};
+      const found=documents.get(target.fsPath);if(!found)throw new FileSystemError('FileNotFound');return found;
+    },
+    applyEdit:async edit=>{
+      edits.push(edit.edits);
+      for(const action of edit.edits) {
+        if(action.type==='create') {await fs.writeFile(action.uri.fsPath,'',{flag:'wx'});documents.set(action.uri.fsPath,{uri:action.uri,text:''});}
+        else {const target=documents.get(action.uri.fsPath);target.text=action.content;target.version=(target.version||0)+1;}
+      }
+      return true;
+    }
+  });
+  await chat.openCode('proposed code','src/example.ts','typescript');
+  assert.equal(shown[0].uri.fsPath,existing.fsPath);
+  await chat.applyCode('--- a/src/example.ts\n+++ b/src/example.ts\n@@ -1 +1 @@\n-before\n+after\n','src/example.ts','diff');
+  assert.equal(document.getText(),'after\n');assert.equal(edits[0][0].type,'replace');
+  assert.equal(await fs.readFile(existing.fsPath,'utf8'),'before\n');
+  await assert.rejects(chat.applyCode('@@ -1 +1 @@\n-before\n+incorrect\n','src/example.ts','diff'),/does not match/);
+  assert.equal(edits.length,1);
+  choice=undefined;await chat.applyCode('replacement\n','src/example.ts','replacement');assert.equal(edits.length,1);
+  choice='Apply';changedDuringReview=true;
+  await assert.rejects(chat.applyCode('replacement\n','src/example.ts','replacement'),/changed during review/);
+  changedDuringReview=false;assert.equal(document.getText(),'after\n');
+  await chat.openCode('export const value = 1;\n','src/deep/new.ts','typescript');
+  assert.match(shown.at(-1).uri.toString(),/^azure-chat-preview:\/src\/deep\/new\.ts\?id=/);
+  await chat.applyCode('export const value = 1;\n','src/deep/new.ts','snippet');
+  const created=path.join(fixture.directory,'src/deep/new.ts');
+  assert.equal(documents.get(created).text,'export const value = 1;\n');assert.equal(shown.at(-1).fsPath,created);
+  await assert.rejects(chat.applyCode('overwrite','src/example.ts','snippet'),/already exists/);
+  for(const bad of ['code','../outside.ts','.git/config','C:\\outside.ts'])await assert.rejects(chat.applyCode('bad',bad,'replacement'));
+});
+
+test('successful history saves clear every attachment and skill; failed saves preserve them for retry',async()=>{
+  const chat=createChat();chat.conversationId='chat';chat.pendingSave=[{id:'reply',role:'assistant',content:'Done'}];
+  const attachments=[{id:'pinned',name:'file.ts',content:'text',uri:uri(process.cwd())},{id:'selection',name:'file.ts:1-2',content:'selection'}];
+  chat.attachments=attachments;chat.selectedSkillIds=['skill'];chat.skillContents=[{name:'skill.md',content:'instructions'}];
+  let fail=true;chat.client=async()=>({json:async()=>{if(fail)throw new Error('Save failed');return {};}});
+  await assert.rejects(chat.save(),/Save failed/);
+  assert.deepEqual(chat.attachments,attachments);assert.deepEqual(chat.selectedSkillIds,['skill']);assert.ok(chat.pendingSave);
+  fail=false;await chat.save();
+  assert.deepEqual(chat.attachments,[]);assert.deepEqual(chat.selectedSkillIds,[]);assert.deepEqual(chat.skillContents,[]);assert.equal(chat.pendingSave,undefined);
 });
 
 test('generation includes formatting while updates preserve only user text and attachments',async()=>{

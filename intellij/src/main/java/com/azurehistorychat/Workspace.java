@@ -97,6 +97,11 @@ final class Workspace {
     }
     void openCode(String text, String path, String language) throws Exception {
         if (bytes(text)>5000000) throw new IOException("Code preview exceeds the 5 MB limit.");
+        if(!path.isEmpty() && !path.equals("code")) {
+            requireTrust();CodeTarget target=codeTarget(safePath(path));if(target==null)return;
+            VirtualFile existing=LocalFileSystem.getInstance().refreshAndFindFileByNioFile(target.path());
+            if(existing!=null) {if(existing.isDirectory())throw new IOException("The path is a directory.");ui(()->{FileEditorManager.getInstance(project).openFile(existing,true);return null;});return;}
+        }
         Map<String,String> extensions=Map.of("typescript","ts","javascript","js","python","py","kotlin","kt","csharp","cs","bash","sh","powershell","ps1","patch","diff");
         String name=path.isEmpty() ? "code." + extensions.getOrDefault(language,language.isEmpty() ? "txt" : language.replaceAll("[^a-zA-Z0-9]", "")) : path.replace('\\','/').substring(path.replace('\\','/').lastIndexOf('/')+1).replaceAll("[^a-zA-Z0-9._-]", "_") + (language.equals("diff") || language.equals("patch") ? ".diff" : "");
         ui(() -> {
@@ -158,19 +163,37 @@ final class Workspace {
     void review(String reply) throws Exception {
         requireTrust(); List<FileChange> changes = changes(reply);
         if (changes.isEmpty()) throw new IOException("No azure-files proposal found in this response.");
-        Path root = chooseRoot(); if (root == null) return;
+        reviewChanges(changes.stream().map(change->new CodeChange(change.path(),change.content(),"replacement")).toList());
+    }
+    void applyCode(String text,String path,String kind) throws Exception {
+        requireTrust();if(path.isEmpty() || path.equals("code"))throw new IOException("The code block needs a project-relative file path.");
+        validateText(text,5000000);if(!List.of("diff","replacement","snippet").contains(kind))throw new IOException("Unsupported file proposal.");
+        reviewChanges(List.of(new CodeChange(safePath(path),text,kind)));
+    }
+    private record CodeTarget(Path root,Path path) {}
+    private CodeTarget codeTarget(String path) throws Exception {
+        List<Path> roots=roots();
+        Path named=roots.size()>1 ? roots.stream().filter(root->path.startsWith(root.getFileName()+"/")).findFirst().orElse(null) : null;
+        Path root=named==null ? chooseRoot() : named;if(root==null)return null;
+        return new CodeTarget(root,validateTarget(root,root.resolve(named==null ? path : path.substring(named.getFileName().toString().length()+1))));
+    }
+    private void reviewChanges(List<CodeChange> changes) throws Exception {
+        requireTrust();
         // Validate the entire proposal before showing any application controls.
-        for (FileChange change : changes) validateTarget(root, root.resolve(change.path()));
-        for (FileChange change : changes) {
-            Path target = root.resolve(change.path()); validateTarget(root, target);
+        List<CodeTarget> targets=new ArrayList<>();
+        for(CodeChange change:changes) {CodeTarget target=codeTarget(change.path());if(target==null)return;targets.add(target);}
+        for (int i=0;i<changes.size();i++) {
+            CodeChange change=changes.get(i);Path root=targets.get(i).root(),target=targets.get(i).path();validateTarget(root,target);
             VirtualFile originalFile = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(target);
             Document originalDocument = originalFile == null ? null : ReadAction.compute(() -> FileDocumentManager.getInstance().getDocument(originalFile));
             if (originalFile != null && (originalFile.isDirectory() || originalDocument == null)) throw new IOException("Target cannot be opened as text: " + change.path());
             String original = originalDocument == null ? "" : ReadAction.compute(originalDocument::getText);
+            if(originalDocument!=null && change.kind().equals("snippet"))throw new IOException("This file already exists. Use a unified diff or a complete replacement to patch it.");
+            String proposed=change.kind().equals("diff") ? applyDiff(original,change.content(),change.path()) : change.content();
             long stamp = originalDocument == null ? -1 : originalDocument.getModificationStamp();
             boolean apply = ui(() -> {
                 DiffContentFactory factory = DiffContentFactory.getInstance();
-                SimpleDiffRequest request = new SimpleDiffRequest(change.path() + " — proposed change", factory.create(project, original), factory.create(project, change.content()), "Current file", "Proposed file");
+                SimpleDiffRequest request = new SimpleDiffRequest(change.path() + " — proposed change", factory.create(project, original), factory.create(project, proposed), "Current file", "Proposed file");
                 ProposalDialog dialog = new ProposalDialog(project, request); return dialog.showAndGet();
             });
             if (!apply) continue;
@@ -193,7 +216,7 @@ final class Workspace {
                             if (document == null) throw new IOException("Cannot open the new text document.");
                             FileEditorManager.getInstance(project).openFile(created, true);
                         }
-                        document.setText(change.content());
+                        document.setText(proposed);
                         if (originalFile != null) FileEditorManager.getInstance(project).openFile(originalFile, true);
                     } catch (IOException error) { throw new IllegalStateException(error.getMessage(), error); }
                 });

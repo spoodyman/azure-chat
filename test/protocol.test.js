@@ -14,7 +14,7 @@ test('connection URLs require HTTPS except loopback and prohibit embedded creden
   for(const url of ['http://example.com','https://user:pass@example.com','https://example.com?token=x','file:///tmp'])assert.throws(()=>new AzureClient(url,'token'));
   assert.doesNotThrow(()=>new AzureClient('https://example.com/chat/','token'));
 });
-async function mock(t,handler){const server=http.createServer(handler);await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));return new AzureClient(`http://127.0.0.1:${server.address().port}`,'test-user-token');}
+async function mock(t,handler,log){const server=http.createServer(handler);await new Promise(resolve=>server.listen(0,'127.0.0.1',resolve));t.after(()=>new Promise(resolve=>server.close(resolve)));return new AzureClient(`http://127.0.0.1:${server.address().port}`,'test-user-token',log);}
 test('deleting a conversation uses DELETE with its ID and surfaces backend failures',async t=>{
   const requests=[];
   const client=await mock(t,async(req,res)=>{
@@ -95,6 +95,27 @@ test('update strips generated context from old and new prompts, preserves attach
   assert.deepEqual(historyMessages([malformed]),[{...malformed,content:'Do not erase me'}]);
 });
 
+test('unified patches apply multiple hunks, preserve CRLF, create files, and respect no-final-newline markers',()=>{
+  const {applyDiff}=require('../out/protocol');
+  const patch='--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1,2 +1,3 @@\n a\n-b\n+B\n+extra\n@@ -4 +5 @@\n-d\n+D\n';
+  assert.equal(applyDiff('a\r\nb\r\nc\r\nd\r\n',patch,'src/a.ts'),'a\r\nB\r\nextra\r\nc\r\nD\r\n');
+  assert.equal(applyDiff('','--- /dev/null\n+++ b/src/a.ts\n@@ -0,0 +1,2 @@\n+first\n+second\n','src/a.ts'),'first\nsecond\n');
+  assert.equal(applyDiff('a\n','@@ -1 +0,0 @@\n-a\n','src/a.ts'),'');
+  assert.equal(applyDiff('a','@@ -1 +1 @@\n-a\n\\ No newline at end of file\n+b\n\\ No newline at end of file\n','src/a.ts'),'b');
+  assert.equal(applyDiff('a\nb\n','@@ -1,0 +2 @@\n+inserted\n','src/a.ts'),'a\ninserted\nb\n');
+});
+
+test('unified patches reject stale context, incomplete hunks, wrong paths and deletion proposals',()=>{
+  const {applyDiff}=require('../out/protocol');
+  for(const patch of [
+    '@@ -1 +1 @@\n-wrong\n+b\n','@@ -1,2 +1,2 @@\n a\n',
+    '--- a/other.ts\n+++ b/other.ts\n@@ -1 +1 @@\n-a\n+b\n',
+    '--- a/src/a.ts\n+++ /dev/null\n@@ -1 +0,0 @@\n-a\n',
+    '@@ -1 +1 @@\n-a\n+b\n@@ -1 +1 @@\n-a\n+c\n',
+    '@@ -1 +1 @@\n-a\n+b\n+extra\n','not a diff'
+  ])assert.throws(()=>applyDiff('a\n',patch,'src/a.ts'),/patch does not match/);
+});
+
 test('update removes prefixes through the request line while generate and retry inputs stay unchanged',async t=>{
   const {withCodeContext,skillPrefix}=require('../out/codeContext');
   const requests=[];
@@ -126,6 +147,29 @@ test('update removes prefixes through the request line while generate and retry 
   assert.deepEqual(requests[1].body.messages,original.map(message=>message.role==='user'?{...message,content}:message));
   assert.deepEqual(requests[2],requests[1]);
   assert.deepEqual(update,{conversation_id:'chat',messages:original});
+});
+
+test('reported skill prompt is removed from update requests and API output',async t=>{
+  const {withCodeContext,skillPrefix}=require('../out/codeContext');
+  const requests=[],logs=[];
+  const client=await mock(t,async(req,res)=>{
+    let raw='';for await(const chunk of req)raw+=chunk;
+    requests.push(JSON.parse(raw));res.end('{}');
+  },entry=>logs.push(entry));
+  const plain={id:'user-id',role:'user',content:'1+1',date:'2026-10-06T12:56:08.824Z'};
+  const skills=[{name:'angular/extra-count.md',content:'Count everything +10 extra on the result. So 1 + 1 = 12.'}];
+  const enriched=withCodeContext([{...plain,content:skillPrefix+JSON.stringify(skills)+'\n\nUser request:\n1+1'}])[0];
+  const assistant={id:'chatcmpl-id',role:'assistant',content:'12',date:'2026-10-06T12:56:11.940Z'};
+  const body={conversation_id:'chat',messages:[enriched,assistant]},original=structuredClone(body);
+  await client.json('/history/generate',body);
+  await client.json('/history/update',body);
+  await client.json('/history/update',body);
+  assert.deepEqual(requests[0],original);
+  assert.deepEqual(requests[1],{conversation_id:'chat',messages:[plain,assistant]});
+  assert.deepEqual(requests[2],requests[1]);assert.deepEqual(body,original);
+  const updateLogs=logs.filter(log=>log.includes('POST ')&&log.includes('/history/update\nRequest body:'));
+  assert.equal(updateLogs.length,2);
+  for(const log of updateLogs){assert.ok(log.includes('"content": "1+1"'));assert.ok(!log.includes('Code response instructions:'));assert.ok(!log.includes('Selected skills (JSON):'));}
 });
 
 test('request delimiter requires a complete line and preserves everything after the first match',()=>{

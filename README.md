@@ -2,11 +2,11 @@
 
 A VS Code sidebar that talks to a deployed [Microsoft Azure OpenAI Chat sample](https://github.com/microsoft/sample-app-aoai-chatGPT) with Cosmos DB chat history.
 
-An [IntelliJ IDEA version](intellij/README.md) is also available in `intellij/`, sharing the chat UI and backend contract. Install the [prebuilt plugin ZIP](intellij/dist/azure-history-chat-intellij-0.1.12.zip), or build with `.\mvnw.cmd "-Didea.home=C:\path\to\IntelliJ IDEA" clean verify` from the `intellij` directory. The build uses your local IntelliJ installation instead of JetBrains Maven repositories; see the [build setup](intellij/README.md#diagnostics-and-development) for Java requirements. It targets IntelliJ IDEA 2024.3–2026.2.
+An [IntelliJ IDEA version](intellij/README.md) is also available in `intellij/`, sharing the chat UI and backend contract. Install the [prebuilt plugin ZIP](intellij/dist/azure-history-chat-intellij-0.1.13.zip), or build with `.\mvnw.cmd "-Didea.home=C:\path\to\IntelliJ IDEA" clean verify` from the `intellij` directory. The build uses your local IntelliJ installation instead of JetBrains Maven repositories; see the [build setup](intellij/README.md#diagnostics-and-development) for Java requirements. It targets IntelliJ IDEA 2024.3–2026.2.
 
 ## Install and connect
 
-1. Install the generated `azure-history-chat-0.1.9.vsix` using **Extensions → … → Install from VSIX**.
+1. Install the generated `azure-history-chat-0.1.11.vsix` using **Extensions → … → Install from VSIX**.
 2. Open **Azure Chat** in the activity bar and click **Connection**.
 3. Enter your sample app's base URL, for example `https://your-chat-app.azurewebsites.net`. This is the chat application URL, not the Azure OpenAI resource URL.
 4. Paste a user bearer token accepted by that app's authentication layer. The token is stored in VS Code SecretStorage and never sent to the webview. Repeat Connection to replace an expired token; leave the token field blank to retain it.
@@ -19,12 +19,12 @@ The extension does not select a model. Your Azure backend must be configured to 
 
 - Select an existing chat, or choose **New chat**. New chats are created when the first message is sent.
 - **Refresh** reloads chat history.
-- **Pin current file** pins the open editor file and includes its name and complete contents with each message until removed. Pinned files use the latest editor contents, including unsaved changes.
+- **Pin current file** includes the open editor file's name and complete contents, including unsaved changes. Successful history updates clear all attachments, pinned files, and selected skills; failed saves retain them for retry.
 - Select text in an editor and use **Azure Chat: Attach Selection** from the command palette or editor context menu. The name includes the source path and line range.
 - Click an attachment to remove it before sending. The combined default limit is 200 KB, adjustable in `azureChat.maxAttachmentBytes`. The server's context limit still applies.
 - Send with the button or Enter. Shift+Enter inserts a new line. Streaming and ordinary JSON replies are supported. **Stop** cancels the client request; backend generation may already have saved the user message.
 - Select a chat from history and use **Delete chat** to remove it and its messages after confirmation. Save any pending reply first.
-- Code appears in collapsed accordions. File-specific blocks are grouped under their relative path, with green `+` and red `−` line counts; unnamed examples each have a **code** accordion. Expand to scroll through highlighted code, **Copy code**, or **Open in editor** for a larger read-only preview. Expanded state and scroll positions survive draft edits and reply updates. **Copy reply** copies the original Markdown.
+- Code appears in collapsed accordions. File-specific blocks are grouped under their relative path, with green `+` and red `−` line counts; unnamed examples each have a **code** accordion. Expanded code uses the page's vertical scrolling. **Open in editor** opens the actual project file when it exists, otherwise a read-only preview labelled with the proposed path. Expanded state and horizontal scroll positions survive updates. **Copy reply** copies the original Markdown.
 - All attachments travel as text within JSON. There are no uploads, image inputs, or native model tools. Attached text becomes part of server chat history.
 
 ## Workspace skills
@@ -69,7 +69,7 @@ Enable `azureChat.fileProposalInstructions` to additionally append the legacy fu
 ```
 ````
 
-Click **Review file changes** on the reply. Choose a workspace folder when several are open. Each file opens in a VS Code diff, followed by an Apply prompt. Applying uses VS Code workspace edits; save the resulting editor to persist its contents. You can undo edits normally. Proposals cannot delete files or execute commands. They require a trusted local workspace; absolute paths, traversal, protected directories and symbolic links outside the root are rejected. A malformed proposal produces an error and does not apply.
+Named accordions offer **Apply patch** for unified diffs, **Apply file** for complete replacements, and **Create file** for named snippets whose file does not exist. Unnamed **code** blocks offer no file creation. **Review file changes** also reviews full-file JSON proposals. Each change opens in a native diff, followed by an Apply prompt. Patches must match the current file's context exactly; named snippets cannot overwrite existing files. Applying uses undoable workspace edits; save the resulting editor to persist its contents. Proposals cannot delete files or execute commands. They require a trusted local workspace; absolute paths, traversal, protected directories and symbolic links outside the root are rejected.
 
 This is a text protocol: the model may need to be asked again if it omits the block or provides invalid JSON. Assistant replies render Markdown including headings, lists, links, tables and fenced code. Raw HTML is displayed as text, and remote images are not loaded. User messages display as plain text.
 

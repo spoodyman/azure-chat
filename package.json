@@ -2,7 +2,7 @@
     "name": "azure-history-chat",
     "displayName": "Azure History Chat",
     "description": "Chat with the Microsoft Azure OpenAI Chat sample and Cosmos DB history.",
-    "version": "0.1.9",
+    "version": "0.1.11",
     "publisher": "local",
     "repository": {
         "type": "git",

@@ -119,6 +119,7 @@ public final class ChatService implements Disposable {
                         int index = event.get("index").getAsInt();
                         if (index >= 0 && index < messages.size() && string(messages.get(index).getAsJsonObject(), "role").equals("assistant")) { workspace.review(string(messages.get(index).getAsJsonObject(), "content")); status = "File changes reviewed. Save applied editors to write their contents to disk."; }
                     }
+                    case "apply-code" -> { workspace.applyCode(string(event,"text"),string(event,"path"),string(event,"kind")); status="File change reviewed. Save applied editors to write it to disk."; }
                     case "show-log" -> showLog();
                     default -> { }
                 }
@@ -206,7 +207,6 @@ public final class ChatService implements Disposable {
             if (conversationId != null) messages = client.read(conversationId);
             messages.add(message("user", compose(text, attached)));
             JsonArray input = withCodeContext(withSkills(messages, selectedSkills),true);
-            attachments.removeIf(value -> value.pinned() == null);
             generating = true; cancellation = new AzureClient.Cancellation(); draft = ""; status = "Generating…"; emit(object("type", "sent"));
             JsonObject placeholder = message("assistant", ""); messages.add(placeholder); render();
             long[] lastRender = {0};
@@ -231,6 +231,7 @@ public final class ChatService implements Disposable {
     private void save() throws Exception {
         if (pendingSave == null || conversationId == null) return;
         try (AzureClient client = client()) { client.json("/history/update", object("conversation_id", conversationId, "messages", pendingSave), "POST"); }
+        attachments.clear();selected.clear();
         pendingSave = null; needsReopen = false; status = "Reply saved to chat history.";
     }
     private JsonObject tokenState() throws Exception {

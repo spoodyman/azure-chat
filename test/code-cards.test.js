@@ -107,7 +107,7 @@ test('line counts match an independent LCS oracle across edits and repeated line
   assert.equal(code.lineChanges(Array(1500).fill('a').concat('same').join('\n'),Array(1500).fill('b').concat('same','b').join('\n')),null);
 });
 
-test('cards expose scrollable code, exact copy, and larger-editor actions per block',()=>{
+test('cards expose full code, exact copy, and editor actions per block',()=>{
   class Element {
     constructor(tag){this.tag=tag;this.children=[];this.dataset={};}
     append(...children){this.children.push(...children);}
@@ -127,4 +127,21 @@ test('cards expose scrollable code, exact copy, and larger-editor actions per bl
   assert.deepEqual(copied,['const a = "<hi>";\n']);
   assert.deepEqual(opened,[{text:'const a = "<hi>";\n',path:'src/a.ts',language:'typescript'}]);
   assert.ok(section.children[1].children[0].innerHTML.includes('&lt;hi&gt;'));
+});
+
+test('named cards expose patch, replacement and create actions while unnamed code remains a preview',()=>{
+  class Element {constructor(tag){this.tag=tag;this.children=[];this.dataset={};}append(...children){this.children.push(...children);}}
+  const document={createElement:tag=>new Element(tag)},applied=[];
+  function render(path,kind,busy=false) {
+    return code.createCard(document,{path,blocks:[{kind,code:'content',language:'text'}]},{key:'test',busy,
+      copyButton:()=>new Element('button'),openCode:()=>{},highlight:text=>text,
+      applyCode:(block,path)=>applied.push({kind:block.kind,path,text:block.code})}).children[1].children[0].children[0].children[1].children;
+  }
+  for(const [kind,label] of [['diff','Apply patch'],['replacement','Apply file'],['snippet','Create file']]) {
+    const actions=render('src/example.ts',kind);assert.equal(actions[1].textContent,label);assert.equal(actions[1].disabled,false);actions[1].onclick();
+  }
+  assert.deepEqual(applied.map(value=>value.kind),['diff','replacement','snippet']);
+  assert.ok(applied.every(value=>value.path==='src/example.ts' && value.text==='content'));
+  assert.equal(render('src/example.ts','diff',true)[1].disabled,true);
+  assert.equal(render(null,'snippet').length,2);assert.equal(render('code','snippet').length,2);
 });

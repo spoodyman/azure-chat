@@ -100,6 +100,21 @@ class ProtocolTest {
         assertNull(usage(object("prompt_tokens", "8", "completion_tokens", 2)));
         assertNull(usage(object("prompt_tokens", 1.5, "completion_tokens", 2)));
     }
+    @Test void unifiedPatchesApplyMultipleHunksAndPreserveLineEndings() {
+        String patch="--- a/src/a.ts\n+++ b/src/a.ts\n@@ -1,2 +1,3 @@\n a\n-b\n+B\n+extra\n@@ -4 +5 @@\n-d\n+D\n";
+        assertEquals("a\r\nB\r\nextra\r\nc\r\nD\r\n",applyDiff("a\r\nb\r\nc\r\nd\r\n",patch,"src/a.ts"));
+        assertEquals("first\nsecond\n",applyDiff("","--- /dev/null\n+++ b/src/a.ts\n@@ -0,0 +1,2 @@\n+first\n+second\n","src/a.ts"));
+        assertEquals("",applyDiff("a\n","@@ -1 +0,0 @@\n-a\n","src/a.ts"));
+        assertEquals("b",applyDiff("a","@@ -1 +1 @@\n-a\n\\ No newline at end of file\n+b\n\\ No newline at end of file\n","src/a.ts"));
+        assertEquals("a\ninserted\nb\n",applyDiff("a\nb\n","@@ -1,0 +2 @@\n+inserted\n","src/a.ts"));
+    }
+    @Test void unifiedPatchesRejectStaleContextIncompleteHunksWrongPathsAndDeletionProposals() {
+        for(String patch:List.of("@@ -1 +1 @@\n-wrong\n+b\n","@@ -1,2 +1,2 @@\n a\n",
+                "--- a/other.ts\n+++ b/other.ts\n@@ -1 +1 @@\n-a\n+b\n",
+                "--- a/src/a.ts\n+++ /dev/null\n@@ -1 +0,0 @@\n-a\n",
+                "@@ -1 +1 @@\n-a\n+b\n@@ -1 +1 @@\n-a\n+c\n","@@ -1 +1 @@\n-a\n+b\n+extra\n","not a diff"))
+            assertThrows(IllegalArgumentException.class,()->applyDiff("a\n",patch,"src/a.ts"));
+    }
     @Test void validatesNewTargetsAndRejectsExternalSymlinks() throws Exception {
         Path root = Files.createDirectory(directory.resolve("project"));
         assertEquals(root.resolve("new/file.java"), validateTarget(root, root.resolve("new/file.java")));

@@ -16,6 +16,57 @@ export function contextTokens(messages: Message[]): number {
 export interface Conversation { id: string; title: string; createdAt?: string; updatedAt?: string; }
 export interface FileChange { path: string; content: string; }
 
+// Apply one file's unified diff exactly; never guess when the current file differs.
+export function applyDiff(original: string, patch: string, filePath: string): string {
+  const newline = original.includes('\r\n') ? '\r\n' : '\n';
+  const source = original.replace(/\r\n?/g,'\n').split('\n');
+  if (!original || source.at(-1) === '') source.pop();
+  const rows = patch.replace(/\r\n?/g,'\n').split('\n'), output: string[] = [];
+  let cursor = 0, hunks = 0, headers = false, finalNewline = /[\r\n]$/.test(original);
+  const fail = () => { throw new Error('The patch does not match the current file, or is incomplete. Regenerate it against the current file.'); };
+  for (let i = 0; i < rows.length;) {
+    const row = rows[i];
+    if (row.startsWith('--- ')) {
+      if (headers || hunks || !rows[i+1]?.startsWith('+++ ')) fail();
+      const oldPath = row.slice(4).split('\t')[0], newPath = rows[i+1].slice(4).split('\t')[0];
+      const normalize = (value: string) => value.replace(/^[ab]\//,'').replace(/\\/g,'/');
+      if (newPath === '/dev/null' || normalize(newPath) !== filePath || (oldPath !== '/dev/null' && normalize(oldPath) !== filePath) || (oldPath === '/dev/null' && original)) fail();
+      headers = true; i += 2; continue;
+    }
+    const hunk = /^@@ -(\d+)(?:,(\d+))? \+(\d+)(?:,(\d+))? @@(?:.*)$/.exec(row);
+    if (!hunk) {
+      if ((!hunks && /^(?:diff --git |index |new file mode )/.test(row)) || (i === rows.length-1 && row === '')) { i++; continue; }
+      fail();
+    }
+    const oldStart = Number(hunk![1]), oldCount = hunk![2] === undefined ? 1 : Number(hunk![2]);
+    const newStart = Number(hunk![3]), newCount = hunk![4] === undefined ? 1 : Number(hunk![4]);
+    if (![oldStart,oldCount,newStart,newCount].every(Number.isSafeInteger)) fail();
+    const position = oldCount ? oldStart-1 : oldStart, newPosition = newCount ? newStart-1 : newStart;
+    if (position < cursor || position > source.length || newPosition !== output.length+position-cursor) fail();
+    for (const line of source.slice(cursor,position)) output.push(line); cursor = position; i++;
+    let oldUsed = 0, newUsed = 0, previous = '', noNewline = false;
+    while (i < rows.length && (oldUsed < oldCount || newUsed < newCount || rows[i] === '\\ No newline at end of file')) {
+      const line = rows[i++], sign = line[0];
+      if (line === '\\ No newline at end of file') {
+        if (!previous || previous === 'marker') fail();
+        if (previous !== '-') noNewline = true;
+        previous = 'marker'; continue;
+      }
+      if (![' ','+','-'].includes(sign)) fail();
+      if (sign !== '+') { if (cursor >= source.length || source[cursor++] !== line.slice(1)) fail(); oldUsed++; }
+      if (sign !== '-') { output.push(line.slice(1)); newUsed++; noNewline = false; }
+      if (oldUsed > oldCount || newUsed > newCount) fail();
+      previous = sign;
+    }
+    if (oldUsed !== oldCount || newUsed !== newCount) fail();
+    if (cursor === source.length) finalNewline = !noNewline;
+    hunks++;
+  }
+  if (!hunks) fail();
+  for (const line of source.slice(cursor)) output.push(line);
+  return output.join(newline) + (output.length && finalNewline ? newline : '');
+}
+
 export function parseChanges(content: string): FileChange[] {
   const blocks = [...content.matchAll(/```azure-files\s*\n([\s\S]*?)\n```/g)];
   if (!blocks.length) return [];

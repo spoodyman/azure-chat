@@ -136,7 +136,7 @@
     }
     return {html:markdown.renderer.render(tokens,markdown.options,{}),groups};
   }
-  function createCard(document,group,{copyButton,openCode,highlight,key}) {
+  function createCard(document,group,{copyButton,openCode,applyCode,highlight,key,busy}) {
     const card=document.createElement('details');card.className='code-accordion';card.dataset.codeKey=key;
     const summary=document.createElement('summary');
     const title=document.createElement('span');title.className='code-path';title.textContent=group.path || 'code';summary.append(title);
@@ -154,8 +154,13 @@
       const toolbar=document.createElement('div');toolbar.className='code-toolbar';
       const language=document.createElement('span');language.textContent=block.language;
       const actions=document.createElement('span');actions.className='code-actions';
-      const open=document.createElement('button');open.textContent='Open in editor';open.title='Open this code in a larger, read-only editor';open.onclick=()=>openCode(block,group.path,index);
-      actions.append(copyButton(block.code,'Copy code'),open);toolbar.append(language,actions);
+      const open=document.createElement('button');open.textContent='Open in editor';open.title='Open the project file, or preview this code if it does not exist';open.onclick=()=>openCode(block,group.path,index);
+      actions.append(copyButton(block.code,'Copy code'));
+      if(applyCode && group.path && group.path!=='code') {
+        const apply=document.createElement('button');apply.textContent=block.kind==='diff' ? 'Apply patch' : block.kind==='replacement' ? 'Apply file' : 'Create file';
+        apply.disabled=!!busy;apply.onclick=()=>applyCode(block,group.path,index);actions.append(apply);
+      }
+      actions.append(open);toolbar.append(language,actions);
       const pre=document.createElement('pre'),code=document.createElement('code');code.className='language-'+block.language;
       // highlight() uses the bundled highlighter, which escapes code and never enables raw HTML.
       code.innerHTML=highlight(block.code,block.language);pre.append(code);section.append(toolbar,pre);scroll.append(section);

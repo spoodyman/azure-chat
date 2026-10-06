@@ -205,8 +205,8 @@ public final class ChatService implements Disposable {
         try (AzureClient client = client()) {
             if (conversationId != null) messages = client.read(conversationId);
             messages.add(message("user", compose(text, attached)));
-            messages = withCodeContext(withSkills(messages, selectedSkills),true);
-            JsonArray input = messages.deepCopy();
+            JsonArray input = withCodeContext(withSkills(messages, selectedSkills),true);
+            messages = historyMessages(messages);
             attachments.removeIf(value -> value.pinned() == null);
             generating = true; cancellation = new AzureClient.Cancellation(); draft = ""; status = "Generating…"; emit(object("type", "sent"));
             JsonObject placeholder = message("assistant", ""); messages.add(placeholder); render();
@@ -220,7 +220,7 @@ public final class ChatService implements Disposable {
                 messages.remove(messages.size() - 1); for (JsonElement tool : response.tools()) messages.add(tool); messages.add(response.message());
                 ChatSettings.getInstance().record(input, response.message(), response.usage());
                 if (conversationId == null) throw new IllegalStateException("Reply received without a conversation ID; cannot save history.");
-                pendingSave = messages.deepCopy(); save();
+                pendingSave = historyMessages(messages); save();
                 try { list(); status = "Reply saved to chat history."; } catch (Exception error) { status = "Reply saved. History refresh failed; use Refresh."; }
             } catch (Exception error) {
                 needsReopen = pendingSave == null;

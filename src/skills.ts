@@ -2,6 +2,7 @@ import * as vscode from 'vscode';
 import {realpath} from 'node:fs/promises';
 import * as path from 'node:path';
 import {Message, parseChanges} from './protocol';
+import {skillPrefix} from './codeContext';
 
 export interface Skill {id: string; name: string; uri: vscode.Uri; root: vscode.Uri;}
 export interface SkillContext {name: string; content: string;}
@@ -76,6 +77,6 @@ export function withSkills(messages: Message[], skills: SkillContext[]): Message
   if (!skills.length || !messages.length) return [...messages];
   const user = messages[messages.length - 1];
   if (user.role !== 'user') throw new Error('Skills require a final user message.');
-  const context = 'Use these selected workspace skills for this response. Each entry contains its relative file name and instructions.\n\nSelected skills (JSON):\n' + JSON.stringify(skills);
+  const context = skillPrefix + JSON.stringify(skills);
   return [...messages.slice(0,-1), {...user, content:context + '\n\nUser request:\n' + user.content}];
 }

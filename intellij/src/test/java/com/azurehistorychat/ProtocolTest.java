@@ -63,6 +63,20 @@ class ProtocolTest {
         assertEquals(1,messages.size());assertEquals(user,messages.get(0));
         assertEquals(messages,withCodeContext(messages,false));
     }
+    @Test void historyExcludesInstructionsAndPreservesUserTextAttachmentsMetadataAndResponses() {
+        String text="Update the file\n\nAttached text (JSON):\n"+JSON.toJson(List.of(object("name","src/a.ts","content","Selected skills (JSON):\n\nUser request:\nconst a = 1;")));
+        JsonArray original=new JsonArray();JsonObject user=message("user",text);user.add("feedback",object("score",1));user.add("attachments",new JsonArray());original.add(user);
+        JsonArray skills=new JsonArray();skills.add(object("name","Test/test.md","content","Use mocks.\n\nUser request:\nMore instructions"));
+        JsonArray input=withCodeContext(withSkills(original,skills),true);
+        JsonObject assistant=message("assistant",string(input.get(0).getAsJsonObject(),"content"));input.add(assistant);
+        JsonArray before=input.deepCopy();JsonArray cleaned=historyMessages(input);
+        assertEquals(user,cleaned.get(0));assertEquals(assistant,cleaned.get(1));assertEquals(before,input);
+        assertEquals(cleaned,historyMessages(cleaned));
+        JsonArray proposal=original.deepCopy();proposal.get(0).getAsJsonObject().addProperty("content","Update the file"+PROPOSAL_INSTRUCTION+text.substring("Update the file".length()));
+        assertEquals(original,historyMessages(proposal));
+        String malformed="Use these selected workspace skills for this response. Each entry contains its relative file name and instructions.\n\nSelected skills (JSON):\ninvalid JSON\n\nUser request:\nDo not erase me";
+        JsonArray invalid=new JsonArray();invalid.add(message("user",malformed));assertEquals(invalid,historyMessages(invalid));
+    }
     @Test void countsUtf8AndValidatesUsage() {
         assertEquals(2, estimate("😀é"));
         assertEquals(new Usage(8, 2, 10), usage(object("prompt_tokens", 8, "completion_tokens", 2, "total_tokens", 9)));

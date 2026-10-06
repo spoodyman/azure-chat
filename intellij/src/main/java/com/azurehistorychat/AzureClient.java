@@ -47,7 +47,10 @@ public final class AzureClient implements AutoCloseable {
     private InputStream request(String route, JsonObject body, String method, Cancellation cancel) throws Exception {
         cancel.check();
         String id = UUID.randomUUID().toString();
-        if (body != null && body.has("messages")) { body = body.deepCopy(); body.add("messages", wireMessages(body.getAsJsonArray("messages"))); }
+        if (body != null && body.has("messages")) {
+            body = body.deepCopy(); JsonArray messages = body.getAsJsonArray("messages");
+            body.add("messages", wireMessages(route.equals("/history/update") ? historyMessages(messages) : messages));
+        }
         String text = body == null ? "" : JSON.toJson(body);
         log(id, method + " " + baseUrl + route + "\nRequest body: " + (body == null ? "(none)" : text));
         HttpRequest request = HttpRequest.newBuilder(URI.create(baseUrl + route)).timeout(Duration.ofSeconds(120))

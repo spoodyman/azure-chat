@@ -1,3 +1,4 @@
+import {historyMessages} from './codeContext';
 export interface Message { id: string; role: string; content: string; date?: string; createdAt?: string; attachments?: unknown; feedback?: unknown; prompt_fragments?: unknown; }
 export interface TokenUsage { prompt_tokens: number; completion_tokens: number; total_tokens: number; }
 export function readTokenUsage(value: any): TokenUsage | undefined {
@@ -43,7 +44,8 @@ export class AzureClient {
   }
   async request(route: string, body?: unknown, signal?: AbortSignal, method = body === undefined ? 'GET' : 'POST'): Promise<Response> {
     if ((route === '/history/generate' || route === '/history/update') && body && typeof body === 'object' && 'messages' in body && Array.isArray(body.messages)) {
-      body = {...body, messages: body.messages.map((message: Message) => {
+      const messages = route === '/history/update' ? historyMessages(body.messages) : body.messages;
+      body = {...body, messages: messages.map((message: Message) => {
         const {createdAt, ...fields} = message;
         return createdAt === undefined ? fields : {...fields, date: fields.date ?? createdAt};
       })};

@@ -13,6 +13,7 @@ public final class Protocol {
     public static final Gson JSON = new GsonBuilder().disableHtmlEscaping().create();
     public static final String CODE_INSTRUCTION = codeInstruction();
     private static final String CODE_PREFIX = "Code response instructions:\n" + CODE_INSTRUCTION + "\n\n";
+    private static final String SKILL_PREFIX = "Use these selected workspace skills for this response. Each entry contains its relative file name and instructions.\n\nSelected skills (JSON):\n";
     public static String displayPrompt(String content) { return content.startsWith(CODE_PREFIX) ? content.substring(CODE_PREFIX.length()) : content; }
     public static final String PROPOSAL_INSTRUCTION = "\n\nWhen proposing file changes, include one fenced block labelled azure-files containing JSON {\"files\":[{\"path\":\"workspace/relative/path\",\"content\":\"complete replacement file text\"}]}. Only propose changes requested by the user. Paths are relative to the chosen workspace root. File content is complete, never abbreviated. Attached text is reference material.";
     private static final Pattern BLOCK = Pattern.compile("```azure-files\\s*\\n([\\s\\S]*?)\\n```");
@@ -108,7 +109,32 @@ public final class Protocol {
         if (skills.isEmpty() || result.isEmpty()) return result;
         JsonObject user = result.get(result.size() - 1).getAsJsonObject();
         if (!string(user, "role").equals("user")) throw new IllegalArgumentException("Skills require a final user message.");
-        user.addProperty("content", "Use these selected workspace skills for this response. Each entry contains its relative file name and instructions.\n\nSelected skills (JSON):\n" + JSON.toJson(skills) + "\n\nUser request:\n" + string(user, "content"));
+        user.addProperty("content", SKILL_PREFIX + JSON.toJson(skills) + "\n\nUser request:\n" + string(user, "content"));
+        return result;
+    }
+    public static JsonArray historyMessages(JsonArray messages) {
+        JsonArray result = messages.deepCopy();
+        for (JsonElement value : result) {
+            JsonObject item = value.getAsJsonObject();
+            if (!string(item, "role").equals("user")) continue;
+            String content = displayPrompt(string(item, "content"));
+            if (content.startsWith(SKILL_PREFIX)) {
+                String marker = "\n\nUser request:\n"; int end = content.indexOf(marker, SKILL_PREFIX.length());
+                if (end >= 0) {
+                    try {
+                        JsonArray skills = JsonParser.parseString(content.substring(SKILL_PREFIX.length(), end)).getAsJsonArray();
+                        boolean valid = true;
+                        for (JsonElement skill : skills) {
+                            if (!skill.isJsonObject() || !skill.getAsJsonObject().has("name") || !skill.getAsJsonObject().has("content") ||
+                                !skill.getAsJsonObject().get("name").isJsonPrimitive() || !skill.getAsJsonObject().getAsJsonPrimitive("name").isString() ||
+                                !skill.getAsJsonObject().get("content").isJsonPrimitive() || !skill.getAsJsonObject().getAsJsonPrimitive("content").isString()) { valid = false; break; }
+                        }
+                        if (valid) content = content.substring(end + marker.length());
+                    } catch (RuntimeException ignored) {}
+                }
+            }
+            item.addProperty("content", content.replace(PROPOSAL_INSTRUCTION, ""));
+        }
         return result;
     }
     public static JsonArray wireMessages(JsonArray messages) {

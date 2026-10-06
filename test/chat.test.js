@@ -98,7 +98,7 @@ test('larger code views use read-only preview documents and remain available whi
   await assert.rejects(chat.openCode('x'.repeat(5000001)),/5 MB/);
 });
 
-test('attached files and response instructions remain in the same dated user prompt',async()=>{
+test('generation includes formatting while updates preserve only user text and attachments',async()=>{
   const generated=[],saved=[];const chat=createChat();
   chat.attachments=[{id:'selection',name:'src/example.ts:3-5',content:'selected code'}];
   chat.conversationId='chat';chat.client=async()=>({read:async()=>[],generate:async messages=>{generated.push(structuredClone(messages));return {message:{id:'reply',role:'assistant',content:'Done'},tools:[],metadata:{}};},json:async(route,body)=>{if(route.startsWith('/history/list'))return [];saved.push(structuredClone(body));return {};}});
@@ -112,7 +112,9 @@ test('attached files and response instructions remain in the same dated user pro
   const {displayPrompt}=require('../out/codeContext');
   assert.ok(displayPrompt(user.content).startsWith('Update the selected code'));
   assert.equal(displayPrompt('Code response instructions:\nMy own text'),'Code response instructions:\nMy own text');
-  assert.equal(saved[0].messages[0].content,user.content);
+  assert.equal(saved[0].messages[0].content,displayPrompt(user.content));
+  assert.equal(saved[0].messages[0].id,user.id);
+  assert.equal(saved[0].messages[0].date,user.date);
 });
 
 test('follow-ups reload persisted history and retry saving the complete dated conversation', async () => {
@@ -146,7 +148,9 @@ test('follow-ups reload persisted history and retry saving the complete dated co
   assert.ok(generations[0].messages.at(-1).content.endsWith('Next'));
   assert.ok(generations[0].messages.at(-1).date);
   assert.equal(generations[0].messages[2].role,'user');
-  assert.deepEqual(saves[0].messages.slice(0, 3), generations[0].messages);
+  const {historyMessages}=require('../out/codeContext');
+  assert.deepEqual(saves[0].messages.slice(0, 3), historyMessages(generations[0].messages));
+  assert.equal(saves[0].messages[2].content,'Next');
   assert.equal(saves[0].messages[3].id, 'reply');
   assert.ok(saves[0].messages.every(message => message.date));
   assert.ok(chat.pendingSave);
@@ -252,7 +256,7 @@ test('skills discover nested Markdown and JSON, refresh deletions, and isolate m
   await emptyChat.refreshSkills();assert.deepEqual(emptyChat.skills,[]);
 });
 
-test('selected skills use current edits in the real user prompt, including history and save retries',async t=>{
+test('selected skills use current edits for generation and stay out of history and save retries',async t=>{
   const fixture=await skillWorkspace(t);
   const markdown=await fixture.write('skills/Test/unit.md','Old instructions');
   await fixture.write('skills/Component/component.json','{"instructions":"Use standalone components"}');
@@ -280,7 +284,11 @@ test('selected skills use current edits in the real user prompt, including histo
   assert.ok(generated[1].content.includes(edited));assert.ok(generated[1].content.includes('Use standalone components'));
   assert.equal(generated.length,history.length+1);
   assert.ok(generated[1].id && Number.isFinite(Date.parse(generated[1].date)));
-  assert.deepEqual(saves[0].messages.slice(0,-1),generated);
+  assert.equal(saves[0].messages.at(-2).content,'Write tests');
+  assert.equal(saves[0].messages.at(-2).id,generated.at(-1).id);
+  assert.ok(!JSON.stringify(saves[0]).includes('UNSAVED'));
+  assert.ok(!JSON.stringify(chat.messages).includes('UNSAVED'));
+  assert.ok(!JSON.stringify(saves[0]).includes('Code response instructions'));
   assert.ok(saves[0].messages.every(message=>message.role!=='system'));
   await chat.save();assert.deepEqual(saves[1],saves[0]);
   const usage=Object.values(chat.usageMonths)[0];
@@ -321,7 +329,10 @@ test('skill prompts generate and persist through an HTTP history endpoint that r
   await chat.selectSkills([]);await chat.send('Follow up');
   assert.equal(saves.length,2);assert.equal(requests[1].messages.length,3);
   assert.deepEqual(requests[1].messages.slice(0,2),saves[0].messages);
-  assert.deepEqual(saves[1].messages.slice(0,-1),requests[1].messages);
+  const {historyMessages}=require('../out/codeContext');
+  assert.deepEqual(saves[1].messages.slice(0,-1),historyMessages(requests[1].messages));
+  assert.equal(saves[0].messages[0].content,'Write tests');
+  assert.equal(saves[1].messages.at(-2).content,'Follow up');
   assert.ok(!requests[1].messages.at(-1).content.includes('Use a fake service'));
 });
 

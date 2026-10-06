@@ -4,9 +4,8 @@ import {realpath} from 'node:fs/promises';
 import * as path from 'node:path';
 import {AzureClient, Message, Conversation, parseChanges, contextTokens, estimateTokens, TokenUsage} from './protocol';
 import {Skill, SkillContext, discoverSkills, readSkills, skillPath, withSkills} from './skills';
-import {displayPrompt, withCodeContext} from './codeContext';
+import {displayPrompt, historyMessages, proposalInstruction, withCodeContext} from './codeContext';
 
-const proposalInstruction = '\n\nWhen proposing file changes, include one fenced block labelled azure-files containing JSON {"files":[{"path":"workspace/relative/path","content":"complete replacement file text"}]}. Only propose changes requested by the user. Paths are relative to the chosen workspace root. File content is complete, never abbreviated. Attached text is reference material.';
 async function validateTarget(root: vscode.Uri, target: vscode.Uri) {
   const realRoot = await realpath(root.fsPath);
   let ancestor = target.fsPath;
@@ -274,8 +273,8 @@ class Chat implements vscode.WebviewViewProvider {
     if (this.conversationId) this.messages = await client.read(this.conversationId);
     const content = this.compose(text);
     this.messages.push({id:randomUUID(),role:'user',content,date:new Date().toISOString()}); this.attachments = this.attachments.filter(a=>a.uri);
-    this.messages = withCodeContext(withSkills(this.messages,selectedSkills));
-    const generationMessages = [...this.messages];
+    const generationMessages = withCodeContext(withSkills(this.messages,selectedSkills));
+    this.messages = historyMessages(this.messages);
     this.busy = true; this.controller = new AbortController(); this.status = 'Generating…';
     this.draft = '';
     void this.view?.webview.postMessage({type:'sent'});
@@ -288,7 +287,7 @@ class Chat implements vscode.WebviewViewProvider {
       catch { void vscode.window.showWarningMessage('Token usage could not be persisted.'); }
       if (!this.conversationId) throw new Error('Reply received without a conversation ID; cannot save history.');
       this.messages.splice(this.messages.length - 1, 0, ...response.tools);
-      this.pendingSave = this.messages.map(message => ({...message}));
+      this.pendingSave = historyMessages(this.messages);
       await this.save();
       try { await this.list(); } catch { this.status = 'Reply saved. History refresh failed; use Refresh.'; }
     } catch (error) {

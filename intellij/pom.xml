@@ -5,7 +5,7 @@
     <modelVersion>4.0.0</modelVersion>
     <groupId>com.azurehistorychat</groupId>
     <artifactId>azure-history-chat-intellij</artifactId>
-    <version>0.1.8</version>
+    <version>0.1.9</version>
     <name>Azure History Chat</name>
     <description>Azure chat history, code context, and reviewed file proposals for IntelliJ IDEA.</description>
 
